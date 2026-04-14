@@ -160,11 +160,11 @@ body {
   border-radius: 999px;
   background: var(--ink);
   color: #fff8ef;
-  min-width: 136px;
-  min-height: 50px;
-  padding: 11px 18px;
+  min-width: 124px;
+  min-height: 42px;
+  padding: 9px 16px;
   font: inherit;
-  font-size: 0.95rem;
+  font-size: 0.88rem;
   font-weight: 700;
   cursor: pointer;
   transition: transform 140ms ease, background 140ms ease;
@@ -181,7 +181,7 @@ body {
 }
 
 .share-button {
-  min-width: 126px;
+  min-width: 116px;
   background: rgba(255, 252, 247, 0.9);
   color: var(--ink);
   border: 1px solid rgba(23, 48, 77, 0.14);
@@ -203,8 +203,8 @@ body {
 }
 
 .button-icon {
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
   fill: currentColor;
   flex: 0 0 auto;
 }
@@ -266,7 +266,7 @@ body {
 
 .search-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 142px;
+  grid-template-columns: minmax(0, 1fr) 126px;
   gap: 12px;
   align-items: center;
 }
