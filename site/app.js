@@ -9,10 +9,14 @@ const PANEL_PADDING = 18;
 const ROUTE_LINE_WIDTH = 2.2;
 const WEIGHT_BLUR_PASSES = 2;
 const WEIGHT_BLUR_RADIUS = 2;
+const HEATMAP_RESOLUTION_SCALE = 2;
+const HEATMAP_BLUR_PX = 7;
+const HEATMAP_ALPHA = 0.8;
 
 const state = {
   data: null,
   ready: false,
+  showHeatmap: false,
   cursorPoint: null,
   cursorScreen: null,
   originPoint: null,
@@ -26,6 +30,7 @@ const state = {
 const mapCanvas = document.getElementById("mapCanvas");
 const statusText = document.getElementById("statusText");
 const pinButton = document.getElementById("pinButton");
+const heatmapToggle = document.getElementById("heatmapToggle");
 const searchForm = document.getElementById("searchForm");
 const addressInput = document.getElementById("addressInput");
 const searchButton = document.getElementById("searchButton");
@@ -54,6 +59,29 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
+}
+
+function heatmapColor(minutes, alpha = 0.56) {
+  const t = clamp(minutes / MAX_TIME_MINUTES, 0, 1);
+  const stops = [
+    { t: 0, color: [232, 96, 53] },
+    { t: 0.25, color: [243, 175, 73] },
+    { t: 0.5, color: [242, 223, 153] },
+    { t: 0.75, color: [159, 198, 209] },
+    { t: 1, color: [81, 115, 152] },
+  ];
+  let left = stops[0];
+  let right = stops[stops.length - 1];
+  for (let index = 0; index < stops.length - 1; index += 1) {
+    if (t >= stops[index].t && t <= stops[index + 1].t) {
+      left = stops[index];
+      right = stops[index + 1];
+      break;
+    }
+  }
+  const mix = (t - left.t) / ((right.t - left.t) || 1);
+  const rgb = left.color.map((value, index) => Math.round(value + (right.color[index] - value) * mix));
+  return `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${alpha})`;
 }
 
 function timeToWeight(minutes) {
@@ -112,8 +140,7 @@ function drawPanelBackground(drawCtx, width, height) {
   }
 }
 
-function drawPolygonPath(drawCtx, polygon, projectPoint) {
-  drawCtx.beginPath();
+function tracePolygonPath(drawCtx, polygon, projectPoint) {
   for (const ring of polygon) {
     ring.forEach((point, index) => {
       const [sx, sy] = projectPoint(point);
@@ -121,6 +148,20 @@ function drawPolygonPath(drawCtx, polygon, projectPoint) {
       else drawCtx.lineTo(sx, sy);
     });
     drawCtx.closePath();
+  }
+}
+
+function drawPolygonPath(drawCtx, polygon, projectPoint) {
+  drawCtx.beginPath();
+  tracePolygonPath(drawCtx, polygon, projectPoint);
+}
+
+function traceBoroughMaskPath(drawCtx, projectPoint) {
+  drawCtx.beginPath();
+  for (const borough of state.data.boroughs) {
+    for (const polygon of borough.polygons) {
+      tracePolygonPath(drawCtx, polygon, projectPoint);
+    }
   }
 }
 
@@ -145,26 +186,32 @@ function nearestStations(point, count) {
     .map((station, index) => ({
       index,
       name: station.name,
-      walkMinutes: distance(point, station.point) / state.data.meta.walkMetersPerMinute,
+      walkMinutes:
+        distance(point, station.point) / state.data.meta.accessWalkMetersPerMinute +
+        state.data.meta.stationAccessPenalty,
     }))
     .sort((a, b) => a.walkMinutes - b.walkMinutes)
     .slice(0, count);
 }
 
 function runDijkstra(originPoint) {
-  const stationCount = state.data.stations.length;
-  const distances = new Array(stationCount).fill(Infinity);
-  const visited = new Array(stationCount).fill(false);
+  const stateCount = state.data.routeStates.length;
+  const distances = new Array(stateCount).fill(Infinity);
+  const visited = new Array(stateCount).fill(false);
   const seeds = nearestStations(originPoint, state.data.meta.originStationCount);
 
   for (const seed of seeds) {
-    distances[seed.index] = seed.walkMinutes + ENTRY_WAIT_MINUTES;
+    for (const routeStateIndex of state.data.stationStates[seed.index] || []) {
+      const routeId = state.data.routeStates[routeStateIndex].routeId;
+      const boardWait = state.data.routeWaits[routeId] ?? state.data.meta.defaultBoardWait ?? ENTRY_WAIT_MINUTES;
+      distances[routeStateIndex] = Math.min(distances[routeStateIndex], seed.walkMinutes + boardWait);
+    }
   }
 
-  for (let step = 0; step < stationCount; step += 1) {
+  for (let step = 0; step < stateCount; step += 1) {
     let current = -1;
     let best = Infinity;
-    for (let index = 0; index < stationCount; index += 1) {
+    for (let index = 0; index < stateCount; index += 1) {
       if (!visited[index] && distances[index] < best) {
         best = distances[index];
         current = index;
@@ -185,7 +232,9 @@ function estimateTravelMinutes(originDistances, destinationPoint) {
   let bestMinutes = distance(state.originPoint, destinationPoint) / state.data.meta.walkMetersPerMinute;
   const nearby = nearestStations(destinationPoint, state.data.meta.cellNearestStations);
   for (const station of nearby) {
-    bestMinutes = Math.min(bestMinutes, originDistances[station.index] + station.walkMinutes);
+    for (const routeStateIndex of state.data.stationStates[station.index] || []) {
+      bestMinutes = Math.min(bestMinutes, originDistances[routeStateIndex] + station.walkMinutes);
+    }
   }
   return bestMinutes;
 }
@@ -198,6 +247,7 @@ function computeWarp(originPoint) {
   const spanY = maxY - minY;
   const cellW = spanX / gridCols;
   const cellH = spanY / gridRows;
+  const minuteGrid = Array.from({ length: gridRows }, () => new Array(gridCols).fill(Infinity));
   const weights = Array.from({ length: gridRows }, () => new Array(gridCols).fill(0));
   const validMask = Array.from({ length: gridRows }, () => new Array(gridCols).fill(false));
   const columnMass = new Array(gridCols).fill(0);
@@ -209,31 +259,40 @@ function computeWarp(originPoint) {
     const cell = state.data.cells[cellIndex];
     let bestMinutes = distance(originPoint, cell.point) / state.data.meta.walkMetersPerMinute;
     for (const [stationIndex, egressMinutes] of cell.access) {
-      bestMinutes = Math.min(bestMinutes, distances[stationIndex] + egressMinutes);
+      for (const routeStateIndex of state.data.stationStates[stationIndex] || []) {
+        bestMinutes = Math.min(bestMinutes, distances[routeStateIndex] + egressMinutes);
+      }
     }
+    minuteGrid[cell.row][cell.col] = bestMinutes;
     weights[cell.row][cell.col] = timeToWeight(bestMinutes);
     validMask[cell.row][cell.col] = true;
   }
 
+  let smoothedMinutes = minuteGrid.map((row) => row.slice());
   let smoothed = weights.map((row) => row.slice());
   for (let pass = 0; pass < WEIGHT_BLUR_PASSES; pass += 1) {
     const next = Array.from({ length: gridRows }, () => new Array(gridCols).fill(0));
+    const nextMinutes = Array.from({ length: gridRows }, () => new Array(gridCols).fill(Infinity));
     for (let row = 0; row < gridRows; row += 1) {
       for (let col = 0; col < gridCols; col += 1) {
         if (!validMask[row][col]) continue;
         let total = 0;
+        let totalMinutes = 0;
         let count = 0;
         for (let y = Math.max(0, row - WEIGHT_BLUR_RADIUS); y <= Math.min(gridRows - 1, row + WEIGHT_BLUR_RADIUS); y += 1) {
           for (let x = Math.max(0, col - WEIGHT_BLUR_RADIUS); x <= Math.min(gridCols - 1, col + WEIGHT_BLUR_RADIUS); x += 1) {
             if (!validMask[y][x]) continue;
             total += smoothed[y][x];
+            totalMinutes += smoothedMinutes[y][x];
             count += 1;
           }
         }
         next[row][col] = count ? total / count : smoothed[row][col];
+        nextMinutes[row][col] = count ? totalMinutes / count : smoothedMinutes[row][col];
       }
     }
     smoothed = next;
+    smoothedMinutes = nextMinutes;
   }
 
   for (let row = 0; row < gridRows; row += 1) {
@@ -314,7 +373,71 @@ function computeWarp(originPoint) {
   const ys = warpedCorners.map((point) => point[1]);
   const warpedBounds = [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
 
-  return { distances, seeds, warpPoint, inverseWarpPoint, warpedBounds };
+  return {
+    distances,
+    seeds,
+    warpPoint,
+    inverseWarpPoint,
+    warpedBounds,
+    xEdges,
+    yEdges,
+    minutes: smoothedMinutes,
+    weights: smoothed,
+    validMask,
+  };
+}
+
+function drawHeatmap(drawCtx, warp, transform) {
+  const { gridCols, gridRows } = state.data.meta;
+  const { width, height } = mapCanvas.getBoundingClientRect();
+  const scale = HEATMAP_RESOLUTION_SCALE;
+  const rawCanvas = document.createElement("canvas");
+  rawCanvas.width = Math.max(1, Math.round(width * scale));
+  rawCanvas.height = Math.max(1, Math.round(height * scale));
+  const rawCtx = rawCanvas.getContext("2d");
+  rawCtx.setTransform(scale, 0, 0, scale, 0, 0);
+  rawCtx.imageSmoothingEnabled = true;
+
+  for (let row = 0; row < gridRows; row += 1) {
+    for (let col = 0; col < gridCols; col += 1) {
+      if (!warp.validMask[row][col]) continue;
+      const left = transform.toScreen([warp.xEdges[col], warp.yEdges[row]])[0];
+      const right = transform.toScreen([warp.xEdges[col + 1], warp.yEdges[row]])[0];
+      const top = transform.toScreen([warp.xEdges[col], warp.yEdges[row + 1]])[1];
+      const bottom = transform.toScreen([warp.xEdges[col], warp.yEdges[row]])[1];
+      rawCtx.fillStyle = heatmapColor(warp.minutes[row][col], 1);
+      rawCtx.fillRect(left, top, Math.max(1, right - left), Math.max(1, bottom - top));
+    }
+  }
+
+  const blurredCanvas = document.createElement("canvas");
+  blurredCanvas.width = rawCanvas.width;
+  blurredCanvas.height = rawCanvas.height;
+  const blurredCtx = blurredCanvas.getContext("2d");
+  blurredCtx.setTransform(scale, 0, 0, scale, 0, 0);
+  blurredCtx.imageSmoothingEnabled = true;
+  blurredCtx.filter = `blur(${HEATMAP_BLUR_PX}px)`;
+  blurredCtx.drawImage(rawCanvas, 0, 0, width, height);
+  blurredCtx.filter = "none";
+
+  const maskedCanvas = document.createElement("canvas");
+  maskedCanvas.width = rawCanvas.width;
+  maskedCanvas.height = rawCanvas.height;
+  const maskedCtx = maskedCanvas.getContext("2d");
+  maskedCtx.setTransform(scale, 0, 0, scale, 0, 0);
+  maskedCtx.imageSmoothingEnabled = true;
+  maskedCtx.save();
+  traceBoroughMaskPath(maskedCtx, (point) => transform.toScreen(warp.warpPoint(point)));
+  maskedCtx.clip();
+  maskedCtx.drawImage(blurredCanvas, 0, 0, width, height);
+  maskedCtx.restore();
+
+  drawCtx.save();
+  drawCtx.globalCompositeOperation = "multiply";
+  drawCtx.globalAlpha = HEATMAP_ALPHA;
+  drawCtx.imageSmoothingEnabled = true;
+  drawCtx.drawImage(maskedCanvas, 0, 0, width, height);
+  drawCtx.restore();
 }
 
 function drawMap(drawCtx, width, height) {
@@ -366,6 +489,10 @@ function drawMap(drawCtx, width, height) {
       drawCtx.lineWidth = 1.05;
       drawCtx.stroke();
     }
+  }
+
+  if (state.showHeatmap) {
+    drawHeatmap(drawCtx, warp, transform);
   }
 
   for (const station of state.data.stations) {
@@ -647,6 +774,12 @@ async function init() {
       state.pinnedPoint = state.cursorPoint;
     }
     syncPinButton();
+    state.dirty = true;
+    requestDraw();
+  });
+
+  heatmapToggle.addEventListener("change", () => {
+    state.showHeatmap = heatmapToggle.checked;
     state.dirty = true;
     requestDraw();
   });

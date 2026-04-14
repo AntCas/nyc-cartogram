@@ -37,7 +37,14 @@
               <h2>Commute-time warp</h2>
               <p id="statusText">Loading transit network…</p>
             </div>
-            <button id="pinButton" class="pin-button" type="button">Pin origin</button>
+            <div class="panel-controls">
+              <label class="toggle-control" for="heatmapToggle">
+                <input id="heatmapToggle" type="checkbox" />
+                <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                <span class="toggle-label">Commute heatmap</span>
+              </label>
+              <button id="pinButton" class="pin-button" type="button">Pin origin</button>
+            </div>
           </div>
           <canvas id="mapCanvas" aria-label="Warped map of New York City by transit time"></canvas>
         </section>

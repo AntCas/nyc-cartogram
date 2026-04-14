@@ -134,6 +134,14 @@ body {
   z-index: 1;
 }
 
+.panel-controls {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .panel-header h2 {
   margin: 0;
   font-size: 1.38rem;
@@ -169,6 +177,56 @@ body {
 
 .pin-button.active {
   background: var(--accent);
+}
+
+.toggle-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--ink);
+  font-size: 0.92rem;
+  font-weight: 700;
+  cursor: pointer;
+  user-select: none;
+}
+
+.toggle-control input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.toggle-track {
+  width: 46px;
+  height: 28px;
+  border-radius: 999px;
+  background: rgba(23, 48, 77, 0.14);
+  padding: 3px;
+  display: inline-flex;
+  align-items: center;
+  transition: background 140ms ease;
+}
+
+.toggle-thumb {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #fff8ef;
+  box-shadow: 0 2px 8px rgba(23, 48, 77, 0.16);
+  transform: translateX(0);
+  transition: transform 140ms ease;
+}
+
+.toggle-control input:checked + .toggle-track {
+  background: rgba(215, 92, 46, 0.75);
+}
+
+.toggle-control input:checked + .toggle-track .toggle-thumb {
+  transform: translateX(18px);
+}
+
+.toggle-label {
+  white-space: nowrap;
 }
 
 .search-card {
@@ -367,6 +425,10 @@ canvas {
 
   .panel-header {
     grid-template-columns: 1fr;
+  }
+
+  .panel-controls {
+    justify-content: flex-start;
   }
 
   .search-row {

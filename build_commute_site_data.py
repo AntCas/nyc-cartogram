@@ -22,15 +22,20 @@ PARKS_PATH = DATA_DIR / "parks_open_space.geojson"
 STREETS_PATH = DATA_DIR / "osm_major_streets.json"
 GTFS_PATH = DATA_DIR / "mta_gtfs_subway.zip"
 
-GRID_COLS = 96
-GRID_ROWS = 96
+GRID_COLS = 160
+GRID_ROWS = 160
 MIN_PARK_AREA = 70_000.0
-WALK_METERS_PER_MINUTE = 75.0
+WALK_METERS_PER_MINUTE = 37.5
+ACCESS_WALK_METERS_PER_MINUTE = 27.5
+STATION_ACCESS_PENALTY = 3.5
 CELL_NEAREST_STATIONS = 4
 ORIGIN_NEAREST_STATIONS = 5
 MAX_SHAPES_PER_ROUTE_DIRECTION = 2
 INTER_COMPLEX_WALK_RADIUS = 260.0
 INTER_COMPLEX_WALK_PENALTY = 2.0
+DEFAULT_BOARD_WAIT = 4.0
+TRANSFER_PENALTY = 4.0
+INTER_COMPLEX_TRANSFER_PENALTY = 7.0
 
 Point = Tuple[float, float]
 Ring = List[Point]
@@ -270,6 +275,10 @@ def parse_gtfs_time(value: str) -> int:
     return hours * 3600 + minutes * 60 + seconds
 
 
+def clamp(value: float, low: float, high: float) -> float:
+    return max(low, min(high, value))
+
+
 def build_station_data(lat0: float) -> Tuple[list, Dict[str, int], Dict[str, str]]:
     complex_info: Dict[str, dict] = {}
     stop_to_complex: Dict[str, str] = {}
@@ -324,7 +333,11 @@ def build_routes_and_shapes(lat0: float, bbox: Tuple[float, float, float, float]
         route_id = row["route_id"]
         if route_id not in route_styles:
             continue
-        trips_by_id[row["trip_id"]] = {"route_id": route_id, "direction_id": row.get("direction_id", "0")}
+        trips_by_id[row["trip_id"]] = {
+            "route_id": route_id,
+            "direction_id": row.get("direction_id", "0"),
+            "service_id": row.get("service_id", ""),
+        }
         shape_counts.setdefault((route_id, row.get("direction_id", "0")), Counter())[row["shape_id"]] += 1
 
     selected_shape_ids = {}
@@ -358,8 +371,52 @@ def build_routes_and_shapes(lat0: float, bbox: Tuple[float, float, float, float]
     return route_styles, shapes, trips_by_id
 
 
-def build_graph(stations: list, station_index_by_id: Dict[str, int], stop_to_complex: Dict[str, str], trips_by_id: dict) -> list:
-    durations_by_edge: Dict[Tuple[int, int], List[float]] = defaultdict(list)
+def build_route_waits(trips_by_id: dict) -> Dict[str, float]:
+    departures_by_route_service: Dict[Tuple[str, str], List[int]] = defaultdict(list)
+    current_trip_id = None
+    first_departure = None
+
+    for row in read_csv_from_zip(GTFS_PATH, "stop_times.txt"):
+        trip_id = row["trip_id"]
+        stop_sequence = int(row["stop_sequence"])
+        if trip_id != current_trip_id:
+            if current_trip_id and first_departure is not None and current_trip_id in trips_by_id:
+                trip = trips_by_id[current_trip_id]
+                departures_by_route_service[(trip["route_id"], trip["service_id"])].append(first_departure)
+            current_trip_id = trip_id
+            first_departure = parse_gtfs_time(row["departure_time"]) if stop_sequence == 1 else None
+        elif stop_sequence == 1 and first_departure is None:
+            first_departure = parse_gtfs_time(row["departure_time"])
+
+    if current_trip_id and first_departure is not None and current_trip_id in trips_by_id:
+        trip = trips_by_id[current_trip_id]
+        departures_by_route_service[(trip["route_id"], trip["service_id"])].append(first_departure)
+
+    waits_by_route: Dict[str, List[float]] = defaultdict(list)
+    for (route_id, _service_id), departures in departures_by_route_service.items():
+        departures = sorted(set(departures))
+        gaps = [
+            (departures[i + 1] - departures[i]) / 60.0
+            for i in range(len(departures) - 1)
+            if 2 * 60 <= departures[i + 1] - departures[i] <= 30 * 60
+        ]
+        if gaps:
+            waits_by_route[route_id].append(statistics.median(gaps) / 2.0)
+
+    route_waits: Dict[str, float] = {}
+    for route_id, waits in waits_by_route.items():
+        route_waits[route_id] = round(clamp(statistics.median(waits), 1.5, 8.0), 2)
+    return route_waits
+
+
+def build_graph(
+    stations: list,
+    station_index_by_id: Dict[str, int],
+    stop_to_complex: Dict[str, str],
+    trips_by_id: dict,
+    route_waits: Dict[str, float],
+) -> Tuple[list, list, list]:
+    durations_by_edge: Dict[Tuple[int, int, str], List[float]] = defaultdict(list)
     current_trip_id = None
     current_rows: List[dict] = []
 
@@ -385,7 +442,7 @@ def build_graph(stations: list, station_index_by_id: Dict[str, int], stop_to_com
             if 20 <= duration_seconds <= 1800:
                 from_index = station_index_by_id[from_complex]
                 to_index = station_index_by_id[to_complex]
-                durations_by_edge[(from_index, to_index)].append(duration_seconds / 60.0)
+                durations_by_edge[(from_index, to_index, route_id)].append(duration_seconds / 60.0)
 
     for row in read_csv_from_zip(GTFS_PATH, "stop_times.txt"):
         trip_id = row["trip_id"]
@@ -399,12 +456,36 @@ def build_graph(stations: list, station_index_by_id: Dict[str, int], stop_to_com
     if current_trip_id and current_rows:
         process_trip(current_trip_id, current_rows)
 
-    adjacency = [dict() for _ in stations]
-    for (from_index, to_index), durations in durations_by_edge.items():
+    route_states = []
+    state_index_by_key: Dict[Tuple[int, str], int] = {}
+    station_states: List[List[int]] = [[] for _ in stations]
+    for station_index, station in enumerate(stations):
+        for route_id in sorted(station["routes"]):
+            state_index_by_key[(station_index, route_id)] = len(route_states)
+            route_states.append({"stationIndex": station_index, "routeId": route_id})
+            station_states[station_index].append(state_index_by_key[(station_index, route_id)])
+
+    adjacency = [dict() for _ in route_states]
+    for (from_station, to_station, route_id), durations in durations_by_edge.items():
+        from_state = state_index_by_key.get((from_station, route_id))
+        to_state = state_index_by_key.get((to_station, route_id))
+        if from_state is None or to_state is None:
+            continue
         weight = round(statistics.median(durations), 2)
-        existing = adjacency[from_index].get(to_index)
+        existing = adjacency[from_state].get(to_state)
         if existing is None or weight < existing:
-            adjacency[from_index][to_index] = weight
+            adjacency[from_state][to_state] = weight
+
+    for station_index, state_indexes in enumerate(station_states):
+        for from_state in state_indexes:
+            for to_state in state_indexes:
+                if from_state == to_state:
+                    continue
+                to_route = route_states[to_state]["routeId"]
+                transfer_cost = round(TRANSFER_PENALTY + route_waits.get(to_route, DEFAULT_BOARD_WAIT), 2)
+                existing = adjacency[from_state].get(to_state)
+                if existing is None or transfer_cost < existing:
+                    adjacency[from_state][to_state] = transfer_cost
 
     for i, source in enumerate(stations):
         sx, sy = source["point"]
@@ -413,18 +494,34 @@ def build_graph(stations: list, station_index_by_id: Dict[str, int], stop_to_com
             distance = math.hypot(tx - sx, ty - sy)
             if distance > INTER_COMPLEX_WALK_RADIUS:
                 continue
-            walk_minutes = round(distance / WALK_METERS_PER_MINUTE + INTER_COMPLEX_WALK_PENALTY, 2)
-            current_ij = adjacency[i].get(j)
-            current_ji = adjacency[j].get(i)
-            if current_ij is None or walk_minutes < current_ij:
-                adjacency[i][j] = walk_minutes
-            if current_ji is None or walk_minutes < current_ji:
-                adjacency[j][i] = walk_minutes
+            walk_minutes = distance / WALK_METERS_PER_MINUTE + INTER_COMPLEX_WALK_PENALTY
+            for from_state in station_states[i]:
+                for to_state in station_states[j]:
+                    to_route = route_states[to_state]["routeId"]
+                    from_route = route_states[from_state]["routeId"]
+                    forward_cost = round(
+                        walk_minutes + INTER_COMPLEX_TRANSFER_PENALTY + route_waits.get(to_route, DEFAULT_BOARD_WAIT),
+                        2,
+                    )
+                    backward_cost = round(
+                        walk_minutes + INTER_COMPLEX_TRANSFER_PENALTY + route_waits.get(from_route, DEFAULT_BOARD_WAIT),
+                        2,
+                    )
+                    existing_forward = adjacency[from_state].get(to_state)
+                    existing_backward = adjacency[to_state].get(from_state)
+                    if existing_forward is None or forward_cost < existing_forward:
+                        adjacency[from_state][to_state] = forward_cost
+                    if existing_backward is None or backward_cost < existing_backward:
+                        adjacency[to_state][from_state] = backward_cost
 
-    return [
-        [[to_index, weight] for to_index, weight in sorted(edges.items())]
-        for edges in adjacency
-    ]
+    return (
+        route_states,
+        station_states,
+        [
+            [[to_index, weight] for to_index, weight in sorted(edges.items())]
+            for edges in adjacency
+        ],
+    )
 
 
 def build_grid_cells(polygons: MultiPolygon, stations: list, bbox: Tuple[float, float, float, float]) -> Tuple[list, list]:
@@ -446,7 +543,11 @@ def build_grid_cells(polygons: MultiPolygon, stations: list, bbox: Tuple[float, 
                 (
                     (
                         station_index,
-                        round(math.hypot(station_point[0] - x, station_point[1] - y) / WALK_METERS_PER_MINUTE, 2),
+                        round(
+                            math.hypot(station_point[0] - x, station_point[1] - y) / ACCESS_WALK_METERS_PER_MINUTE
+                            + STATION_ACCESS_PENALTY,
+                            2,
+                        ),
                     )
                     for station_index, station_point in enumerate(station_points)
                 ),
@@ -471,9 +572,12 @@ def main() -> None:
     bbox = bounds_of_multipolygon(all_polygons)
     parks = extract_parks(lat0, bbox)
     streets = extract_streets(lat0, bbox)
-    stations, station_index_by_id, child_to_parent = build_station_data(lat0)
+    stations, station_index_by_id, stop_to_complex = build_station_data(lat0)
     route_styles, route_shapes, trips_by_id = build_routes_and_shapes(lat0, bbox)
-    adjacency = build_graph(stations, station_index_by_id, child_to_parent, trips_by_id)
+    route_waits = build_route_waits(trips_by_id)
+    route_states, station_states, adjacency = build_graph(
+        stations, station_index_by_id, stop_to_complex, trips_by_id, route_waits
+    )
     cells, mask = build_grid_cells(all_polygons, stations, bbox)
 
     output = {
@@ -483,8 +587,13 @@ def main() -> None:
             "gridCols": GRID_COLS,
             "gridRows": GRID_ROWS,
             "walkMetersPerMinute": WALK_METERS_PER_MINUTE,
+            "accessWalkMetersPerMinute": ACCESS_WALK_METERS_PER_MINUTE,
+            "stationAccessPenalty": STATION_ACCESS_PENALTY,
             "originStationCount": ORIGIN_NEAREST_STATIONS,
             "cellNearestStations": CELL_NEAREST_STATIONS,
+            "defaultBoardWait": DEFAULT_BOARD_WAIT,
+            "transferPenalty": TRANSFER_PENALTY,
+            "interComplexTransferPenalty": INTER_COMPLEX_TRANSFER_PENALTY,
         },
         "boroughs": boroughs,
         "parks": parks,
@@ -499,6 +608,9 @@ def main() -> None:
             }
             for station in stations
         ],
+        "routeStates": route_states,
+        "stationStates": station_states,
+        "routeWaits": route_waits,
         "adjacency": adjacency,
         "cells": cells,
         "mask": mask,
