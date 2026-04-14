@@ -1,10 +1,8 @@
 const DATA_URL = "./data/commute_map_data.json";
 const ENTRY_WAIT_MINUTES = 2.5;
-const TIME_DECAY_MINUTES = 18;
-const TIME_SHARPNESS = 1.35;
-const BASE_WEIGHT = 0.08;
-const WARP_EXAGGERATION = 1.5;
 const MAX_TIME_MINUTES = 80;
+const MIN_AREA_WEIGHT = 0.32;
+const MAX_AREA_WEIGHT = 1.78;
 const PANEL_PADDING = 18;
 const ROUTE_LINE_WIDTH = 2.2;
 const WEIGHT_BLUR_PASSES = 2;
@@ -84,10 +82,9 @@ function heatmapColor(minutes, alpha = 0.56) {
   return `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${alpha})`;
 }
 
-function timeToWeight(minutes) {
-  const capped = Math.min(MAX_TIME_MINUTES, Math.max(0, minutes));
-  const access = Math.exp(-Math.pow(capped / TIME_DECAY_MINUTES, TIME_SHARPNESS));
-  return BASE_WEIGHT + access * WARP_EXAGGERATION;
+function minuteToAreaWeight(minutes) {
+  const t = clamp(minutes / MAX_TIME_MINUTES, 0, 1);
+  return MIN_AREA_WEIGHT + (1 - t) * (MAX_AREA_WEIGHT - MIN_AREA_WEIGHT);
 }
 
 function buildTransform(bounds, width, height, padding = PANEL_PADDING) {
@@ -248,7 +245,6 @@ function computeWarp(originPoint) {
   const cellW = spanX / gridCols;
   const cellH = spanY / gridRows;
   const minuteGrid = Array.from({ length: gridRows }, () => new Array(gridCols).fill(Infinity));
-  const weights = Array.from({ length: gridRows }, () => new Array(gridCols).fill(0));
   const validMask = Array.from({ length: gridRows }, () => new Array(gridCols).fill(false));
   const columnMass = new Array(gridCols).fill(0);
   const rowMass = new Array(gridRows).fill(0);
@@ -264,42 +260,39 @@ function computeWarp(originPoint) {
       }
     }
     minuteGrid[cell.row][cell.col] = bestMinutes;
-    weights[cell.row][cell.col] = timeToWeight(bestMinutes);
     validMask[cell.row][cell.col] = true;
   }
 
   let smoothedMinutes = minuteGrid.map((row) => row.slice());
-  let smoothed = weights.map((row) => row.slice());
   for (let pass = 0; pass < WEIGHT_BLUR_PASSES; pass += 1) {
-    const next = Array.from({ length: gridRows }, () => new Array(gridCols).fill(0));
     const nextMinutes = Array.from({ length: gridRows }, () => new Array(gridCols).fill(Infinity));
     for (let row = 0; row < gridRows; row += 1) {
       for (let col = 0; col < gridCols; col += 1) {
         if (!validMask[row][col]) continue;
-        let total = 0;
         let totalMinutes = 0;
         let count = 0;
         for (let y = Math.max(0, row - WEIGHT_BLUR_RADIUS); y <= Math.min(gridRows - 1, row + WEIGHT_BLUR_RADIUS); y += 1) {
           for (let x = Math.max(0, col - WEIGHT_BLUR_RADIUS); x <= Math.min(gridCols - 1, col + WEIGHT_BLUR_RADIUS); x += 1) {
             if (!validMask[y][x]) continue;
-            total += smoothed[y][x];
             totalMinutes += smoothedMinutes[y][x];
             count += 1;
           }
         }
-        next[row][col] = count ? total / count : smoothed[row][col];
         nextMinutes[row][col] = count ? totalMinutes / count : smoothedMinutes[row][col];
       }
     }
-    smoothed = next;
     smoothedMinutes = nextMinutes;
   }
+
+  const areaWeights = Array.from({ length: gridRows }, () => new Array(gridCols).fill(0));
 
   for (let row = 0; row < gridRows; row += 1) {
     for (let col = 0; col < gridCols; col += 1) {
       if (!validMask[row][col]) continue;
-      columnMass[col] += smoothed[row][col];
-      rowMass[row] += smoothed[row][col];
+      const areaWeight = minuteToAreaWeight(smoothedMinutes[row][col]);
+      areaWeights[row][col] = areaWeight;
+      columnMass[col] += areaWeight;
+      rowMass[row] += areaWeight;
     }
   }
 
@@ -372,6 +365,15 @@ function computeWarp(originPoint) {
   const xs = warpedCorners.map((point) => point[0]);
   const ys = warpedCorners.map((point) => point[1]);
   const warpedBounds = [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+  const expansion = Array.from({ length: gridRows }, () => new Array(gridCols).fill(0));
+  for (let row = 0; row < gridRows; row += 1) {
+    const scaleY = (yEdges[row + 1] - yEdges[row]) / cellH;
+    for (let col = 0; col < gridCols; col += 1) {
+      if (!validMask[row][col]) continue;
+      const scaleX = (xEdges[col + 1] - xEdges[col]) / cellW;
+      expansion[row][col] = scaleX * scaleY;
+    }
+  }
 
   return {
     distances,
@@ -382,7 +384,8 @@ function computeWarp(originPoint) {
     xEdges,
     yEdges,
     minutes: smoothedMinutes,
-    weights: smoothed,
+    expansion,
+    areaWeights,
     validMask,
   };
 }
