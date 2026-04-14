@@ -1084,7 +1084,9 @@ async function init() {
   mapCanvas.addEventListener("pointerleave", () => {
     state.cursorScreen = null;
     if (!state.pinned) {
-      state.cursorPoint = state.originPoint;
+      state.cursorPoint = null;
+      state.originPoint = null;
+      state.originLabel = null;
     }
     state.dirty = true;
     requestDraw();
