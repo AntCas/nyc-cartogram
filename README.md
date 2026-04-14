@@ -4,6 +4,9 @@ This project generates a subway-access weighted map of New York City as an SVG.
 
 You can check it out here: https://castrio.me/nyc-cartogram
 
+<img width="1080" height="1350" alt="nyc-commute-cartogram-1776207492206" src="https://github.com/user-attachments/assets/1380ab76-b7dc-4e37-9433-183c2fd1c4cc" />
+
+
 The script:
 - uses official borough boundaries from NYC Open Data
 - uses official MTA GTFS subway route shapes and station locations
