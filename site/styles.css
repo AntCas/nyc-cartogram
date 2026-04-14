@@ -109,6 +109,8 @@ body {
   padding: 18px 20px 18px;
   position: relative;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .panel-card::before {
@@ -190,6 +192,13 @@ body {
   align-items: center;
   justify-content: center;
   gap: 10px;
+}
+
+.icon-button {
+  min-width: 42px;
+  width: 42px;
+  padding: 0;
+  gap: 0;
 }
 
 .share-button:hover {
@@ -387,6 +396,34 @@ canvas {
   margin-top: 12px;
   position: relative;
   z-index: 1;
+  flex: 1 1 auto;
+}
+
+.panel-card.is-immersive,
+.panel-card:fullscreen {
+  width: 100vw;
+  height: 100dvh;
+  max-width: none;
+  border-radius: 0;
+  padding: 14px 14px 12px;
+  margin: 0;
+}
+
+.panel-card.is-immersive .panel-header,
+.panel-card:fullscreen .panel-header {
+  gap: 8px 12px;
+}
+
+.panel-card.is-immersive .map-frame,
+.panel-card:fullscreen .map-frame {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.panel-card.is-immersive canvas,
+.panel-card:fullscreen canvas {
+  height: 100%;
+  aspect-ratio: auto;
 }
 
 .map-meta {
@@ -459,9 +496,32 @@ canvas {
 }
 
 @media (max-width: 640px) {
+  body {
+    overflow: hidden;
+  }
+
   .page-shell {
-    width: min(100vw - 20px, 1380px);
-    padding-top: 20px;
+    width: 100vw;
+    padding: 0;
+  }
+
+  .hero,
+  .notes,
+  .footer-strip {
+    display: none;
+  }
+
+  .workspace {
+    gap: 0;
+  }
+
+  .panel-card {
+    min-height: 100dvh;
+    border-radius: 0;
+    padding: 14px 14px 12px;
+    border-left: 0;
+    border-right: 0;
+    border-bottom: 0;
   }
 
   .panel-header {
@@ -480,7 +540,19 @@ canvas {
     width: auto;
   }
 
-  .footer-strip {
-    align-items: flex-start;
+  .map-frame {
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  canvas {
+    height: 100%;
+    aspect-ratio: auto;
+  }
+
+  .legend-overlay {
+    right: 14px;
+    bottom: 14px;
+    min-width: 250px;
   }
 }

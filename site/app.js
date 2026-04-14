@@ -35,6 +35,7 @@ const heatmapToggle = document.getElementById("heatmapToggle");
 const heatmapLegend = document.getElementById("heatmapLegend");
 const heatmapLegendMin = document.getElementById("heatmapLegendMin");
 const heatmapLegendMax = document.getElementById("heatmapLegendMax");
+const fullscreenButton = document.getElementById("fullscreenButton");
 const searchForm = document.getElementById("searchForm");
 const addressInput = document.getElementById("addressInput");
 const searchButton = document.getElementById("searchButton");
@@ -42,6 +43,7 @@ const shareButton = document.getElementById("shareButton");
 const searchMeta = document.getElementById("searchMeta");
 const searchResults = document.getElementById("searchResults");
 const ctx = mapCanvas.getContext("2d");
+const panelCard = document.querySelector(".panel-card");
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
@@ -832,6 +834,14 @@ function syncHeatmapLegend() {
   heatmapLegendMax.textContent = `${MAX_TIME_MINUTES}m`;
 }
 
+function syncFullscreenButton() {
+  const isFullscreen = document.fullscreenElement === panelCard;
+  panelCard.classList.toggle("is-immersive", isFullscreen);
+  const label = isFullscreen ? "Exit full screen" : "Enter full screen";
+  fullscreenButton.setAttribute("aria-label", label);
+  fullscreenButton.setAttribute("title", label);
+}
+
 function clearSearchResults() {
   searchResults.innerHTML = "";
 }
@@ -1003,6 +1013,26 @@ async function init() {
     requestDraw();
   });
 
+  fullscreenButton.addEventListener("click", async () => {
+    try {
+      if (document.fullscreenElement === panelCard) {
+        await document.exitFullscreen();
+      } else {
+        await panelCard.requestFullscreen();
+      }
+    } catch (error) {
+      console.error(error);
+    } finally {
+      syncFullscreenButton();
+      resize();
+    }
+  });
+
+  document.addEventListener("fullscreenchange", () => {
+    syncFullscreenButton();
+    resize();
+  });
+
   shareButton.addEventListener("click", () => {
     downloadShareImage().catch((error) => {
       console.error(error);
@@ -1035,6 +1065,8 @@ async function init() {
       searchButton.textContent = "Search";
     }
   });
+
+  syncFullscreenButton();
 }
 
 init().catch((error) => {
