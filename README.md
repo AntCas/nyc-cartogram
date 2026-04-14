@@ -2,6 +2,8 @@
 
 This project generates a subway-access weighted map of New York City as an SVG.
 
+You can check it out here: https://castrio.me/nyc-cartogram
+
 The script:
 - uses official borough boundaries from NYC Open Data
 - uses official MTA GTFS subway route shapes and station locations
