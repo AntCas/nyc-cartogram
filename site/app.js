@@ -7,6 +7,8 @@ const WARP_EXAGGERATION = 1.5;
 const MAX_TIME_MINUTES = 80;
 const PANEL_PADDING = 18;
 const ROUTE_LINE_WIDTH = 2.2;
+const WEIGHT_BLUR_PASSES = 2;
+const WEIGHT_BLUR_RADIUS = 2;
 
 const state = {
   data: null,
@@ -196,6 +198,8 @@ function computeWarp(originPoint) {
   const spanY = maxY - minY;
   const cellW = spanX / gridCols;
   const cellH = spanY / gridRows;
+  const weights = Array.from({ length: gridRows }, () => new Array(gridCols).fill(0));
+  const validMask = Array.from({ length: gridRows }, () => new Array(gridCols).fill(false));
   const columnMass = new Array(gridCols).fill(0);
   const rowMass = new Array(gridRows).fill(0);
 
@@ -207,9 +211,37 @@ function computeWarp(originPoint) {
     for (const [stationIndex, egressMinutes] of cell.access) {
       bestMinutes = Math.min(bestMinutes, distances[stationIndex] + egressMinutes);
     }
-    const weight = timeToWeight(bestMinutes);
-    columnMass[cell.col] += weight;
-    rowMass[cell.row] += weight;
+    weights[cell.row][cell.col] = timeToWeight(bestMinutes);
+    validMask[cell.row][cell.col] = true;
+  }
+
+  let smoothed = weights.map((row) => row.slice());
+  for (let pass = 0; pass < WEIGHT_BLUR_PASSES; pass += 1) {
+    const next = Array.from({ length: gridRows }, () => new Array(gridCols).fill(0));
+    for (let row = 0; row < gridRows; row += 1) {
+      for (let col = 0; col < gridCols; col += 1) {
+        if (!validMask[row][col]) continue;
+        let total = 0;
+        let count = 0;
+        for (let y = Math.max(0, row - WEIGHT_BLUR_RADIUS); y <= Math.min(gridRows - 1, row + WEIGHT_BLUR_RADIUS); y += 1) {
+          for (let x = Math.max(0, col - WEIGHT_BLUR_RADIUS); x <= Math.min(gridCols - 1, col + WEIGHT_BLUR_RADIUS); x += 1) {
+            if (!validMask[y][x]) continue;
+            total += smoothed[y][x];
+            count += 1;
+          }
+        }
+        next[row][col] = count ? total / count : smoothed[row][col];
+      }
+    }
+    smoothed = next;
+  }
+
+  for (let row = 0; row < gridRows; row += 1) {
+    for (let col = 0; col < gridCols; col += 1) {
+      if (!validMask[row][col]) continue;
+      columnMass[col] += smoothed[row][col];
+      rowMass[row] += smoothed[row][col];
+    }
   }
 
   function normalize(values) {

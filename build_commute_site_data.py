@@ -29,6 +29,8 @@ WALK_METERS_PER_MINUTE = 75.0
 CELL_NEAREST_STATIONS = 4
 ORIGIN_NEAREST_STATIONS = 5
 MAX_SHAPES_PER_ROUTE_DIRECTION = 2
+INTER_COMPLEX_WALK_RADIUS = 260.0
+INTER_COMPLEX_WALK_PENALTY = 2.0
 
 Point = Tuple[float, float]
 Ring = List[Point]
@@ -269,28 +271,40 @@ def parse_gtfs_time(value: str) -> int:
 
 
 def build_station_data(lat0: float) -> Tuple[list, Dict[str, int], Dict[str, str]]:
+    complex_info: Dict[str, dict] = {}
+    stop_to_complex: Dict[str, str] = {}
+
+    for row in load_json(DATA_DIR / "subway_stations.json"):
+        complex_id = row["complex_id"]
+        stop_code = row["gtfs_stop_id"]
+        stop_to_complex[stop_code] = complex_id
+        stop_to_complex[f"{stop_code}N"] = complex_id
+        stop_to_complex[f"{stop_code}S"] = complex_id
+        info = complex_info.setdefault(
+            complex_id,
+            {
+                "id": complex_id,
+                "name": row["stop_name"],
+                "point": lonlat_to_xy(float(row["gtfs_longitude"]), float(row["gtfs_latitude"]), lat0),
+                "routes": set(),
+            },
+        )
+        routes = (row.get("daytime_routes") or "").split()
+        info["routes"].update(route for route in routes if route)
+
     stations = []
     station_index_by_id: Dict[str, int] = {}
-    child_to_parent: Dict[str, str] = {}
+    for complex_id, info in sorted(complex_info.items(), key=lambda item: int(item[0])):
+        station_index_by_id[complex_id] = len(stations)
+        stations.append(info)
+
     for row in read_csv_from_zip(GTFS_PATH, "stops.txt"):
         stop_id = row["stop_id"]
         parent_station = row.get("parent_station") or ""
-        location_type = row.get("location_type") or ""
-        if parent_station:
-            child_to_parent[stop_id] = parent_station
-        elif location_type == "1":
-            point = lonlat_to_xy(float(row["stop_lon"]), float(row["stop_lat"]), lat0)
-            station_index_by_id[stop_id] = len(stations)
-            stations.append(
-                {
-                    "id": stop_id,
-                    "name": row["stop_name"],
-                    "point": point,
-                    "routes": set(),
-                }
-            )
-            child_to_parent[stop_id] = stop_id
-    return stations, station_index_by_id, child_to_parent
+        if stop_id not in stop_to_complex and parent_station and parent_station in stop_to_complex:
+            stop_to_complex[stop_id] = stop_to_complex[parent_station]
+
+    return stations, station_index_by_id, stop_to_complex
 
 
 def build_routes_and_shapes(lat0: float, bbox: Tuple[float, float, float, float]) -> Tuple[dict, list, dict]:
@@ -344,7 +358,7 @@ def build_routes_and_shapes(lat0: float, bbox: Tuple[float, float, float, float]
     return route_styles, shapes, trips_by_id
 
 
-def build_graph(stations: list, station_index_by_id: Dict[str, int], child_to_parent: Dict[str, str], trips_by_id: dict) -> list:
+def build_graph(stations: list, station_index_by_id: Dict[str, int], stop_to_complex: Dict[str, str], trips_by_id: dict) -> list:
     durations_by_edge: Dict[Tuple[int, int], List[float]] = defaultdict(list)
     current_trip_id = None
     current_rows: List[dict] = []
@@ -355,24 +369,22 @@ def build_graph(stations: list, station_index_by_id: Dict[str, int], child_to_pa
             return
         route_id = trip["route_id"]
         ordered = sorted(rows, key=lambda row: int(row["stop_sequence"]))
-        station_ids = []
         for row in ordered:
             stop_id = row["stop_id"]
-            parent = child_to_parent.get(stop_id, stop_id.rstrip("NS"))
-            station_ids.append(parent)
-            if parent in station_index_by_id:
-                stations[station_index_by_id[parent]]["routes"].add(route_id)
+            complex_id = stop_to_complex.get(stop_id)
+            if complex_id in station_index_by_id:
+                stations[station_index_by_id[complex_id]]["routes"].add(route_id)
         for prev, nxt in zip(ordered, ordered[1:]):
-            from_parent = child_to_parent.get(prev["stop_id"], prev["stop_id"].rstrip("NS"))
-            to_parent = child_to_parent.get(nxt["stop_id"], nxt["stop_id"].rstrip("NS"))
-            if from_parent == to_parent:
+            from_complex = stop_to_complex.get(prev["stop_id"])
+            to_complex = stop_to_complex.get(nxt["stop_id"])
+            if not from_complex or not to_complex or from_complex == to_complex:
                 continue
-            if from_parent not in station_index_by_id or to_parent not in station_index_by_id:
+            if from_complex not in station_index_by_id or to_complex not in station_index_by_id:
                 continue
             duration_seconds = parse_gtfs_time(nxt["arrival_time"]) - parse_gtfs_time(prev["departure_time"])
             if 20 <= duration_seconds <= 1800:
-                from_index = station_index_by_id[from_parent]
-                to_index = station_index_by_id[to_parent]
+                from_index = station_index_by_id[from_complex]
+                to_index = station_index_by_id[to_complex]
                 durations_by_edge[(from_index, to_index)].append(duration_seconds / 60.0)
 
     for row in read_csv_from_zip(GTFS_PATH, "stop_times.txt"):
@@ -399,9 +411,9 @@ def build_graph(stations: list, station_index_by_id: Dict[str, int], child_to_pa
         for j in range(i + 1, len(stations)):
             tx, ty = stations[j]["point"]
             distance = math.hypot(tx - sx, ty - sy)
-            if distance > 320.0:
+            if distance > INTER_COMPLEX_WALK_RADIUS:
                 continue
-            walk_minutes = round(distance / WALK_METERS_PER_MINUTE + 1.5, 2)
+            walk_minutes = round(distance / WALK_METERS_PER_MINUTE + INTER_COMPLEX_WALK_PENALTY, 2)
             current_ij = adjacency[i].get(j)
             current_ji = adjacency[j].get(i)
             if current_ij is None or walk_minutes < current_ij:
