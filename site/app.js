@@ -42,8 +42,6 @@ const shareButton = document.getElementById("shareButton");
 const searchMeta = document.getElementById("searchMeta");
 const searchResults = document.getElementById("searchResults");
 const ctx = mapCanvas.getContext("2d");
-const SHARE_BUTTON_LABEL = "Save";
-
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
@@ -73,11 +71,6 @@ function formatShareTime(date = new Date()) {
     hour: "numeric",
     minute: "2-digit",
   });
-}
-
-function setShareButtonLabel(label) {
-  const text = shareButton.querySelector("span");
-  if (text) text.textContent = label;
 }
 
 function escapeHtml(value) {
@@ -600,12 +593,12 @@ function drawMap(drawCtx, width, height) {
   const station = state.data.stations[nearest.index];
   if (state.pinned && state.cursorPoint) {
     const probeMinutes = estimateTravelMinutes(warp.distances, state.cursorPoint);
-    statusText.textContent = `Pinned near ${station.name}. Hover anywhere to inspect commute time back to this origin.`;
+    statusText.textContent = `Pinned near ${station.name}`;
     if (state.cursorScreen) {
       drawHoverTooltip(drawCtx, state.cursorScreen, `${formatMinutes(probeMinutes)} away`);
     }
   } else {
-    statusText.textContent = `Warped from near ${station.name}. Click to pin this origin, then hover to probe commute time back to it.`;
+    statusText.textContent = `Warped from near ${station.name}`;
   }
 }
 
@@ -774,7 +767,6 @@ function exportShareImage() {
 
 async function downloadShareImage() {
   shareButton.disabled = true;
-  setShareButtonLabel("Rendering…");
   try {
     requestDraw();
     await new Promise((resolve) => window.requestAnimationFrame(() => resolve()));
@@ -789,7 +781,6 @@ async function downloadShareImage() {
     URL.revokeObjectURL(url);
   } finally {
     shareButton.disabled = false;
-    setShareButtonLabel(SHARE_BUTTON_LABEL);
   }
 }
 
@@ -1015,7 +1006,6 @@ async function init() {
     downloadShareImage().catch((error) => {
       console.error(error);
       shareButton.disabled = false;
-      setShareButtonLabel(SHARE_BUTTON_LABEL);
     });
   });
 
