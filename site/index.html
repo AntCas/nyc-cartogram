@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>NYC Commute POV</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow">Transit Time Cartogram</p>
+          <h1>See New York by how long it takes to get there.</h1>
+          <p class="lede">
+            Hover over the map to choose an origin. Click to pin it, then move the cursor to read
+            commute times back to that pinned point while the city stays warped around it.
+          </p>
+        </div>
+        <div class="hero-stats">
+          <div class="stat">
+            <span class="stat-label">Mode</span>
+            <strong>Transit + station access walk</strong>
+          </div>
+          <div class="stat">
+            <span class="stat-label">Interaction</span>
+            <strong>Hover to move, click to pin, hover to probe</strong>
+          </div>
+        </div>
+      </header>
+
+      <main class="workspace">
+        <section class="panel-card accent">
+          <div class="panel-header">
+            <div>
+              <h2>Commute-time warp</h2>
+              <p id="statusText">Loading transit network…</p>
+            </div>
+            <button id="pinButton" class="pin-button" type="button">Pin origin</button>
+            <div class="legend">
+              <span><i class="swatch fast"></i>Fast access grows</span>
+              <span><i class="swatch slow"></i>Slow access shrinks</span>
+            </div>
+          </div>
+          <canvas id="mapCanvas" aria-label="Warped map of New York City by transit time"></canvas>
+        </section>
+      </main>
+
+      <section class="notes">
+        <p>
+          Travel times are estimated from MTA GTFS subway trips plus short walking access to and
+          from stations. This prototype is transit-only for now and does not yet include bus service
+          or real-time schedules.
+        </p>
+      </section>
+
+      <footer class="footer-strip">
+        <div class="footer-links">
+          <a href="https://data.cityofnewyork.us/resource/gthc-hcne.geojson?$limit=100" target="_blank" rel="noreferrer">NYC borough boundaries</a>
+          <a href="https://new.mta.info/developers" target="_blank" rel="noreferrer">MTA GTFS subway data</a>
+          <a href="https://www.openstreetmap.org/" target="_blank" rel="noreferrer">OpenStreetMap streets</a>
+          <a href="https://www.nycgovparks.org/about/health-and-safety-guide/open-data" target="_blank" rel="noreferrer">NYC Parks open space</a>
+        </div>
+        <p class="footer-credit">
+          Made with Codex GPT-5.4 Medium by
+          <a href="https://castrio.me" target="_blank" rel="noreferrer">Anthony Castrio</a>.
+          <a href="https://twitter.com/AnthonyCastrio" target="_blank" rel="noreferrer">@AnthonyCastrio</a>
+          <a href="https://www.linkedin.com/in/AntCas" target="_blank" rel="noreferrer">LinkedIn</a>
+        </p>
+      </footer>
+    </div>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
