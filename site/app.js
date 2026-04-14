@@ -15,7 +15,9 @@ const HEATMAP_ALPHA = 0.8;
 const state = {
   data: null,
   ready: false,
+  showWarp: true,
   showHeatmap: true,
+  showPinHint: true,
   cursorPoint: null,
   cursorScreen: null,
   originPoint: null,
@@ -30,7 +32,7 @@ const state = {
 
 const mapCanvas = document.getElementById("mapCanvas");
 const statusText = document.getElementById("statusText");
-const pinButton = document.getElementById("pinButton");
+const warpToggle = document.getElementById("warpToggle");
 const heatmapToggle = document.getElementById("heatmapToggle");
 const heatmapLegend = document.getElementById("heatmapLegend");
 const heatmapLegendMin = document.getElementById("heatmapLegendMin");
@@ -486,13 +488,16 @@ function drawMap(drawCtx, width, height) {
   drawPanelBackground(drawCtx, width, height);
   if (!state.originPoint || !state.transform) return;
 
-  const warp = computeWarp(state.originPoint);
+  const warp = state.showWarp ? computeWarp(state.originPoint) : null;
   // Keep hover-mode geography fixed in the frame. We only lock the warped map
   // to a chosen screen point once the user pins an origin.
   const anchorScreen = state.pinned ? state.pinnedScreen : null;
   const baseTransform = state.transform;
-  const anchoredOrigin = baseTransform.toScreen(warp.warpPoint(state.originPoint));
-  const [warpMinX, warpMinY, warpMaxX, warpMaxY] = warp.warpedBounds;
+  const warpPoint = warp ? warp.warpPoint : (point) => point;
+  const inverseWarpPoint = warp ? warp.inverseWarpPoint : (point) => point;
+  const warpedBounds = warp ? warp.warpedBounds : state.data.meta.bounds;
+  const anchoredOrigin = baseTransform.toScreen(warpPoint(state.originPoint));
+  const [warpMinX, warpMinY, warpMaxX, warpMaxY] = warpedBounds;
   const topLeft = baseTransform.toScreen([warpMinX, warpMaxY]);
   const bottomRight = baseTransform.toScreen([warpMaxX, warpMinY]);
   const leftBound = topLeft[0];
@@ -508,8 +513,16 @@ function drawMap(drawCtx, width, height) {
   const dx = clampToRange(desiredDx, minDx, maxDx);
   const dy = clampToRange(desiredDy, minDy, maxDy);
   const transform = offsetTransform(baseTransform, dx, dy);
-  const projectPoint = (point) => transform.toScreen(warp.warpPoint(point));
-  state.currentRender = { warp, transform, anchorOffset: [dx, dy] };
+  const projectPoint = (point) => transform.toScreen(warpPoint(point));
+  state.currentRender = {
+    warp: {
+      inverseWarpPoint,
+      distances: warp?.distances ?? null,
+      seeds: warp?.seeds ?? [],
+    },
+    transform,
+    anchorOffset: [dx, dy],
+  };
 
   for (const borough of state.data.boroughs) {
     for (const polygon of borough.polygons) {
@@ -553,7 +566,7 @@ function drawMap(drawCtx, width, height) {
     }
   }
 
-  if (state.showHeatmap) {
+  if (state.showHeatmap && warp) {
     drawHeatmap(drawCtx, warp, transform);
   }
 
@@ -591,16 +604,25 @@ function drawMap(drawCtx, width, height) {
     drawMarker(drawCtx, state.cursorScreen, "#17304d", 18, 4.3, 0.18);
   }
 
-  const nearest = warp.seeds[0];
-  const station = state.data.stations[nearest.index];
+  const nearest = warp?.seeds?.[0] ?? null;
+  const station = nearest ? state.data.stations[nearest.index] : null;
   if (state.pinned && state.cursorPoint) {
-    const probeMinutes = estimateTravelMinutes(warp.distances, state.cursorPoint);
-    statusText.textContent = `Pinned near ${station.name}`;
+    const probeMinutes = warp
+      ? estimateTravelMinutes(warp.distances, state.cursorPoint)
+      : distance(state.originPoint, state.cursorPoint) / state.data.meta.walkMetersPerMinute;
+    statusText.textContent = station ? `Pinned near ${station.name}` : "Pinned origin";
     if (state.cursorScreen) {
       drawHoverTooltip(drawCtx, state.cursorScreen, `${formatMinutes(probeMinutes)} away`);
     }
   } else {
-    statusText.textContent = `Warped from near ${station.name}`;
+    statusText.textContent = station
+      ? `${state.showWarp ? "Warped" : "Shown"} from near ${station.name}`
+      : state.showWarp
+        ? "Warped commute-time view"
+        : "Geographic commute-time view";
+    if (state.showPinHint && state.cursorScreen) {
+      drawHoverTooltip(drawCtx, state.cursorScreen, "Click to pin");
+    }
   }
 }
 
@@ -823,11 +845,6 @@ function withinBounds(point) {
   return point[0] >= minX && point[0] <= maxX && point[1] >= minY && point[1] <= maxY;
 }
 
-function syncPinButton() {
-  pinButton.textContent = state.pinned ? "Click to Unpin" : "Click to Pin";
-  pinButton.classList.toggle("active", state.pinned);
-}
-
 function syncHeatmapLegend() {
   heatmapLegend.hidden = !state.showHeatmap;
   heatmapLegendMin.textContent = "0m";
@@ -852,7 +869,6 @@ function setPinnedOrigin(worldPoint) {
   state.pinnedScreen = null;
   state.pinned = true;
   state.cursorPoint = worldPoint;
-  syncPinButton();
   state.dirty = true;
   requestDraw();
 }
@@ -929,13 +945,13 @@ async function init() {
   const response = await fetch(DATA_URL);
   state.data = await response.json();
   state.ready = true;
+  warpToggle.checked = state.showWarp;
   heatmapToggle.checked = state.showHeatmap;
   syncHeatmapLegend();
 
   const manhattan = state.data.boroughs.find((borough) => borough.name === "Manhattan");
   state.cursorPoint = manhattan ? manhattan.label : state.data.stations[0].point;
   state.originPoint = state.cursorPoint;
-  syncPinButton();
 
   resize();
   window.addEventListener("resize", resize);
@@ -958,6 +974,7 @@ async function init() {
     if (!withinBounds(worldPoint)) return;
     state.cursorScreen = screenPoint;
     state.cursorPoint = worldPoint;
+    state.showPinHint = false;
     if (!state.pinned) {
       state.originPoint = worldPoint;
       state.originLabel = null;
@@ -971,7 +988,6 @@ async function init() {
       state.originPoint = worldPoint;
       state.originLabel = null;
     }
-    syncPinButton();
     state.dirty = true;
     requestDraw();
   });
@@ -985,30 +1001,15 @@ async function init() {
     requestDraw();
   });
 
-  pinButton.addEventListener("click", () => {
-    if (state.pinned) {
-      state.pinned = false;
-      state.pinnedPoint = null;
-      state.pinnedScreen = null;
-      if (state.cursorPoint) {
-        state.originPoint = state.cursorPoint;
-        state.originLabel = null;
-      }
-    } else if (state.cursorPoint) {
-      state.pinned = true;
-      state.originPoint = state.cursorPoint;
-      state.originLabel = null;
-      state.pinnedPoint = state.cursorPoint;
-      state.pinnedScreen = state.cursorScreen;
-    }
-    syncPinButton();
+  heatmapToggle.addEventListener("change", () => {
+    state.showHeatmap = heatmapToggle.checked;
+    syncHeatmapLegend();
     state.dirty = true;
     requestDraw();
   });
 
-  heatmapToggle.addEventListener("change", () => {
-    state.showHeatmap = heatmapToggle.checked;
-    syncHeatmapLegend();
+  warpToggle.addEventListener("change", () => {
+    state.showWarp = warpToggle.checked;
     state.dirty = true;
     requestDraw();
   });
