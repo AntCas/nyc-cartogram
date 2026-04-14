@@ -431,8 +431,8 @@ function computeWarp(originPoint) {
   };
 }
 
-function drawHeatmap(drawCtx, warp, transform) {
-  const { gridCols, gridRows } = state.data.meta;
+function drawHeatmap(drawCtx, warp, transform, useWarpGeometry = true) {
+  const { gridCols, gridRows, bounds } = state.data.meta;
   const { width, height } = mapCanvas.getBoundingClientRect();
   const scale = HEATMAP_RESOLUTION_SCALE;
   const rawCanvas = document.createElement("canvas");
@@ -441,14 +441,21 @@ function drawHeatmap(drawCtx, warp, transform) {
   const rawCtx = rawCanvas.getContext("2d");
   rawCtx.setTransform(scale, 0, 0, scale, 0, 0);
   rawCtx.imageSmoothingEnabled = true;
+  const [minX, minY, maxX, maxY] = bounds;
+  const cellW = (maxX - minX) / gridCols;
+  const cellH = (maxY - minY) / gridRows;
 
   for (let row = 0; row < gridRows; row += 1) {
     for (let col = 0; col < gridCols; col += 1) {
       if (!warp.validMask[row][col]) continue;
-      const left = transform.toScreen([warp.xEdges[col], warp.yEdges[row]])[0];
-      const right = transform.toScreen([warp.xEdges[col + 1], warp.yEdges[row]])[0];
-      const top = transform.toScreen([warp.xEdges[col], warp.yEdges[row + 1]])[1];
-      const bottom = transform.toScreen([warp.xEdges[col], warp.yEdges[row]])[1];
+      const x0 = useWarpGeometry ? warp.xEdges[col] : minX + col * cellW;
+      const x1 = useWarpGeometry ? warp.xEdges[col + 1] : x0 + cellW;
+      const y0 = useWarpGeometry ? warp.yEdges[row] : minY + row * cellH;
+      const y1 = useWarpGeometry ? warp.yEdges[row + 1] : y0 + cellH;
+      const left = transform.toScreen([x0, y0])[0];
+      const right = transform.toScreen([x1, y0])[0];
+      const top = transform.toScreen([x0, y1])[1];
+      const bottom = transform.toScreen([x0, y0])[1];
       rawCtx.fillStyle = heatmapColor(warp.minutes[row][col], 1);
       rawCtx.fillRect(left, top, Math.max(1, right - left), Math.max(1, bottom - top));
     }
@@ -471,7 +478,7 @@ function drawHeatmap(drawCtx, warp, transform) {
   maskedCtx.setTransform(scale, 0, 0, scale, 0, 0);
   maskedCtx.imageSmoothingEnabled = true;
   maskedCtx.save();
-  traceBoroughMaskPath(maskedCtx, (point) => transform.toScreen(warp.warpPoint(point)));
+  traceBoroughMaskPath(maskedCtx, (point) => transform.toScreen(useWarpGeometry ? warp.warpPoint(point) : point));
   maskedCtx.clip();
   maskedCtx.drawImage(blurredCanvas, 0, 0, width, height);
   maskedCtx.restore();
@@ -486,16 +493,97 @@ function drawHeatmap(drawCtx, warp, transform) {
 
 function drawMap(drawCtx, width, height) {
   drawPanelBackground(drawCtx, width, height);
-  if (!state.originPoint || !state.transform) return;
+  if (!state.transform) return;
 
-  const warp = state.showWarp ? computeWarp(state.originPoint) : null;
+  if (!state.originPoint) {
+    const projectPoint = (point) => state.transform.toScreen(point);
+    for (const borough of state.data.boroughs) {
+      for (const polygon of borough.polygons) {
+        drawPolygonPath(drawCtx, polygon, projectPoint);
+        drawCtx.fillStyle = "#f3f6fa";
+        drawCtx.fill();
+      }
+    }
+
+    for (const polygon of state.data.parks) {
+      drawPolygonPath(drawCtx, polygon, projectPoint);
+      drawCtx.fillStyle = "#dbeacd";
+      drawCtx.strokeStyle = "#a7c39b";
+      drawCtx.lineWidth = 0.45;
+      drawCtx.fill();
+      drawCtx.stroke();
+    }
+
+    for (const street of state.data.streets) {
+      drawCtx.strokeStyle = "rgba(193, 202, 212, 0.92)";
+      drawCtx.lineWidth = streetWidth(street.kind);
+      drawCtx.lineCap = "round";
+      drawCtx.lineJoin = "round";
+      drawPolyline(drawCtx, street.points, projectPoint);
+    }
+
+    for (const route of state.data.routes) {
+      drawCtx.strokeStyle = route.color;
+      drawCtx.lineWidth = ROUTE_LINE_WIDTH;
+      drawCtx.lineCap = "round";
+      drawCtx.lineJoin = "round";
+      drawPolyline(drawCtx, route.points, projectPoint);
+    }
+
+    for (const borough of state.data.boroughs) {
+      for (const polygon of borough.polygons) {
+        drawPolygonPath(drawCtx, polygon, projectPoint);
+        drawCtx.strokeStyle = "#4f6987";
+        drawCtx.lineWidth = 1.05;
+        drawCtx.stroke();
+      }
+    }
+
+    for (const station of state.data.stations) {
+      const [sx, sy] = projectPoint(station.point);
+      drawCtx.beginPath();
+      drawCtx.arc(sx, sy, 1.35, 0, Math.PI * 2);
+      drawCtx.fillStyle = "#ffffff";
+      drawCtx.fill();
+      drawCtx.lineWidth = 0.55;
+      drawCtx.strokeStyle = "#5a6e84";
+      drawCtx.stroke();
+    }
+
+    drawCtx.font = '700 15px "Avenir Next", "Helvetica Neue", Helvetica, sans-serif';
+    drawCtx.textAlign = "center";
+    drawCtx.textBaseline = "middle";
+    drawCtx.fillStyle = "#17304d";
+    drawCtx.strokeStyle = "rgba(255,252,247,0.95)";
+    drawCtx.lineWidth = 6;
+    drawCtx.lineJoin = "round";
+    for (const borough of state.data.boroughs) {
+      const [lx, ly] = projectPoint(borough.label);
+      drawCtx.strokeText(borough.name, lx, ly);
+      drawCtx.fillText(borough.name, lx, ly);
+    }
+
+    statusText.textContent = "Hover to preview an origin, then click to pin it.";
+    state.currentRender = {
+      warp: {
+        inverseWarpPoint: (point) => point,
+        distances: null,
+        seeds: [],
+      },
+      transform: state.transform,
+      anchorOffset: [0, 0],
+    };
+    return;
+  }
+
+  const warp = state.showWarp || state.showHeatmap ? computeWarp(state.originPoint) : null;
   // Keep hover-mode geography fixed in the frame. We only lock the warped map
   // to a chosen screen point once the user pins an origin.
-  const anchorScreen = state.pinned ? state.pinnedScreen : null;
+  const anchorScreen = state.showWarp && state.pinned ? state.pinnedScreen : null;
   const baseTransform = state.transform;
-  const warpPoint = warp ? warp.warpPoint : (point) => point;
+  const warpPoint = state.showWarp && warp ? warp.warpPoint : (point) => point;
   const inverseWarpPoint = warp ? warp.inverseWarpPoint : (point) => point;
-  const warpedBounds = warp ? warp.warpedBounds : state.data.meta.bounds;
+  const warpedBounds = state.showWarp && warp ? warp.warpedBounds : state.data.meta.bounds;
   const anchoredOrigin = baseTransform.toScreen(warpPoint(state.originPoint));
   const [warpMinX, warpMinY, warpMaxX, warpMaxY] = warpedBounds;
   const topLeft = baseTransform.toScreen([warpMinX, warpMaxY]);
@@ -516,7 +604,7 @@ function drawMap(drawCtx, width, height) {
   const projectPoint = (point) => transform.toScreen(warpPoint(point));
   state.currentRender = {
     warp: {
-      inverseWarpPoint,
+      inverseWarpPoint: state.showWarp ? inverseWarpPoint : (point) => point,
       distances: warp?.distances ?? null,
       seeds: warp?.seeds ?? [],
     },
@@ -567,7 +655,8 @@ function drawMap(drawCtx, width, height) {
   }
 
   if (state.showHeatmap && warp) {
-    drawHeatmap(drawCtx, warp, transform);
+    const heatmapTransform = state.showWarp ? transform : baseTransform;
+    drawHeatmap(drawCtx, warp, heatmapTransform, state.showWarp);
   }
 
   for (const station of state.data.stations) {
@@ -950,8 +1039,8 @@ async function init() {
   syncHeatmapLegend();
 
   const manhattan = state.data.boroughs.find((borough) => borough.name === "Manhattan");
-  state.cursorPoint = manhattan ? manhattan.label : state.data.stations[0].point;
-  state.originPoint = state.cursorPoint;
+  state.cursorPoint = null;
+  state.originPoint = null;
 
   resize();
   window.addEventListener("resize", resize);
