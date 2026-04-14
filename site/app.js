@@ -15,7 +15,7 @@ const HEATMAP_ALPHA = 0.8;
 const state = {
   data: null,
   ready: false,
-  showHeatmap: false,
+  showHeatmap: true,
   cursorPoint: null,
   cursorScreen: null,
   originPoint: null,
@@ -471,7 +471,9 @@ function drawMap(drawCtx, width, height) {
   if (!state.originPoint || !state.transform) return;
 
   const warp = computeWarp(state.originPoint);
-  const anchorScreen = state.pinned ? state.pinnedScreen : state.cursorScreen;
+  // Keep hover-mode geography fixed in the frame. We only lock the warped map
+  // to a chosen screen point once the user pins an origin.
+  const anchorScreen = state.pinned ? state.pinnedScreen : null;
   const baseTransform = state.transform;
   const anchoredOrigin = baseTransform.toScreen(warp.warpPoint(state.originPoint));
   const [warpMinX, warpMinY, warpMaxX, warpMaxY] = warp.warpedBounds;
@@ -759,6 +761,7 @@ async function init() {
   const response = await fetch(DATA_URL);
   state.data = await response.json();
   state.ready = true;
+  heatmapToggle.checked = state.showHeatmap;
 
   const manhattan = state.data.boroughs.find((borough) => borough.name === "Manhattan");
   state.cursorPoint = manhattan ? manhattan.label : state.data.stations[0].point;

@@ -57,13 +57,13 @@ body {
   margin: 0;
   font-size: clamp(2.4rem, 5vw, 4.8rem);
   line-height: 0.92;
-  max-width: 12ch;
+  max-width: 18ch;
   letter-spacing: -0.04em;
 }
 
 .lede {
   margin: 18px 0 0;
-  max-width: 62ch;
+  max-width: 69ch;
   color: var(--muted);
   font-size: 1.05rem;
   line-height: 1.55;
