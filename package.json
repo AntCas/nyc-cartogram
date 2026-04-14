@@ -1,0 +1,11 @@
+{
+  "name": "nyc-transit-time-map",
+  "private": true,
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev"
+  },
+  "devDependencies": {
+    "wrangler": "^4.11.1"
+  }
+}

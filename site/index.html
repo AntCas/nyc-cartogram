@@ -18,14 +18,15 @@
           </p>
         </div>
         <div class="hero-stats">
-          <div class="stat">
-            <span class="stat-label">Mode</span>
-            <strong>Transit + station access walk</strong>
-          </div>
-          <div class="stat">
-            <span class="stat-label">Interaction</span>
-            <strong>Hover to move, click to pin, hover to probe</strong>
-          </div>
+          <form id="searchForm" class="stat search-card" autocomplete="off">
+            <label class="stat-label" for="addressInput">Pin by Address</label>
+            <div class="search-row">
+              <input id="addressInput" name="address" type="text" placeholder="Search an NYC address" />
+              <button id="searchButton" class="pin-button search-button" type="submit">Search</button>
+            </div>
+            <div id="searchMeta" class="search-meta">Pin the origin by typing a New York City address.</div>
+            <div id="searchResults" class="search-results" aria-live="polite"></div>
+          </form>
         </div>
       </header>
 
@@ -37,10 +38,6 @@
               <p id="statusText">Loading transit network…</p>
             </div>
             <button id="pinButton" class="pin-button" type="button">Pin origin</button>
-            <div class="legend">
-              <span><i class="swatch fast"></i>Fast access grows</span>
-              <span><i class="swatch slow"></i>Slow access shrinks</span>
-            </div>
           </div>
           <canvas id="mapCanvas" aria-label="Warped map of New York City by transit time"></canvas>
         </section>

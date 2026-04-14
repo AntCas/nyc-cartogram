@@ -41,6 +41,18 @@ Website files:
 - [site/styles.css](/Users/primaryuser/Desktop/nyc-projection/site/styles.css)
 - [site/data/commute_map_data.json](/Users/primaryuser/Desktop/nyc-projection/site/data/commute_map_data.json)
 
+Cloudflare deploy:
+
+```bash
+npm install -D wrangler
+npx wrangler login
+npm run deploy
+```
+
+This repo includes:
+- [wrangler.jsonc](/Users/primaryuser/Desktop/nyc-projection/wrangler.jsonc) to upload the `site/` directory as static assets
+- [src/worker.js](/Users/primaryuser/Desktop/nyc-projection/src/worker.js) to serve the site from the `/nyc-transit-time-map` path prefix on `castrio.me`
+
 Notes:
 - The map now uses a single shared geographic projection for boroughs, stations, route shapes, parks, and streets so transit layers stay aligned to the basemap.
 - Because people enter the subway at stations, the weighting is based on distance to the nearest station complex rather than track geometry alone.

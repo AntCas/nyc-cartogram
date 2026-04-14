@@ -24,6 +24,11 @@ const state = {
 const mapCanvas = document.getElementById("mapCanvas");
 const statusText = document.getElementById("statusText");
 const pinButton = document.getElementById("pinButton");
+const searchForm = document.getElementById("searchForm");
+const addressInput = document.getElementById("addressInput");
+const searchButton = document.getElementById("searchButton");
+const searchMeta = document.getElementById("searchMeta");
+const searchResults = document.getElementById("searchResults");
 const ctx = mapCanvas.getContext("2d");
 
 function clamp(value, min, max) {
@@ -38,6 +43,15 @@ function formatMinutes(minutes) {
   if (!Number.isFinite(minutes)) return "unreachable";
   if (minutes < 1) return "<1 min";
   return `${Math.round(minutes)} min`;
+}
+
+function escapeHtml(value) {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
 }
 
 function timeToWeight(minutes) {
@@ -450,8 +464,89 @@ function withinBounds(point) {
 }
 
 function syncPinButton() {
-  pinButton.textContent = state.pinned ? "Unpin origin" : "Pin origin";
+  pinButton.textContent = state.pinned ? "Click to Unpin" : "Click to Pin";
   pinButton.classList.toggle("active", state.pinned);
+}
+
+function clearSearchResults() {
+  searchResults.innerHTML = "";
+}
+
+function setPinnedOrigin(worldPoint) {
+  state.originPoint = worldPoint;
+  state.pinnedPoint = worldPoint;
+  state.pinned = true;
+  state.cursorPoint = worldPoint;
+  syncPinButton();
+  state.dirty = true;
+  requestDraw();
+}
+
+function renderSearchResults(results) {
+  clearSearchResults();
+  if (!results.length) {
+    searchMeta.textContent = "No NYC address matches found.";
+    return;
+  }
+  searchMeta.textContent = "Choose a result to pin the origin there.";
+  searchResults.innerHTML = results
+    .map(
+      (result, index) => `
+        <button class="search-result" type="button" data-result-index="${index}">
+          <strong>${escapeHtml(result.title)}</strong>
+          <span>${escapeHtml(result.subtitle)}</span>
+        </button>
+      `,
+    )
+    .join("");
+
+  for (const button of searchResults.querySelectorAll(".search-result")) {
+    button.addEventListener("click", () => {
+      const result = results[Number(button.dataset.resultIndex)];
+      const worldPoint = lonLatToWorld(result.lon, result.lat);
+      if (!withinBounds(worldPoint)) {
+        searchMeta.textContent = "That result fell outside the current NYC map bounds.";
+        return;
+      }
+      addressInput.value = result.title;
+      searchMeta.textContent = `Pinned origin to ${result.title}.`;
+      clearSearchResults();
+      setPinnedOrigin(worldPoint);
+    });
+  }
+}
+
+function lonLatToWorld(lon, lat) {
+  const metersPerDegLat = 111_320.0;
+  const metersPerDegLon = metersPerDegLat * Math.cos((state.data.meta.lat0 * Math.PI) / 180);
+  return [lon * metersPerDegLon, lat * metersPerDegLat];
+}
+
+async function searchAddress(query) {
+  const params = new URLSearchParams({
+    q: `${query}, New York City`,
+    format: "jsonv2",
+    addressdetails: "1",
+    countrycodes: "us",
+    limit: "5",
+    bounded: "1",
+    viewbox: "-74.30,40.95,-73.65,40.45",
+  });
+  const response = await fetch(`https://nominatim.openstreetmap.org/search?${params.toString()}`, {
+    headers: {
+      Accept: "application/json",
+    },
+  });
+  if (!response.ok) {
+    throw new Error(`Search failed with status ${response.status}`);
+  }
+  const payload = await response.json();
+  return payload.map((item) => ({
+    title: item.display_name.split(",").slice(0, 2).join(",").trim(),
+    subtitle: item.display_name,
+    lat: Number(item.lat),
+    lon: Number(item.lon),
+  }));
 }
 
 async function init() {
@@ -522,6 +617,32 @@ async function init() {
     syncPinButton();
     state.dirty = true;
     requestDraw();
+  });
+
+  searchForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const query = addressInput.value.trim();
+    if (!query) {
+      searchMeta.textContent = "Enter an NYC address to search.";
+      clearSearchResults();
+      return;
+    }
+
+    searchButton.disabled = true;
+    searchButton.textContent = "Searching";
+    searchMeta.textContent = "Looking up NYC address matches…";
+    clearSearchResults();
+
+    try {
+      const results = await searchAddress(query);
+      renderSearchResults(results);
+    } catch (error) {
+      console.error(error);
+      searchMeta.textContent = "Address lookup failed. Try a more specific NYC address.";
+    } finally {
+      searchButton.disabled = false;
+      searchButton.textContent = "Search";
+    }
   });
 }
 

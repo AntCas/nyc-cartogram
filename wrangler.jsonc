@@ -1,0 +1,21 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "nyc-transit-time-map",
+  "main": "src/worker.js",
+  "compatibility_date": "2026-04-13",
+  "routes": [
+    {
+      "pattern": "castrio.me/nyc-transit-time-map",
+      "zone_name": "castrio.me"
+    },
+    {
+      "pattern": "castrio.me/nyc-transit-time-map/*",
+      "zone_name": "castrio.me"
+    }
+  ],
+  "assets": {
+    "directory": "./site",
+    "binding": "ASSETS",
+    "not_found_handling": "404-page"
+  }
+}
