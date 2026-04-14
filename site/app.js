@@ -19,6 +19,7 @@ const state = {
   cursorPoint: null,
   cursorScreen: null,
   originPoint: null,
+  originLabel: null,
   pinnedPoint: null,
   pinnedScreen: null,
   pinned: false,
@@ -31,9 +32,13 @@ const mapCanvas = document.getElementById("mapCanvas");
 const statusText = document.getElementById("statusText");
 const pinButton = document.getElementById("pinButton");
 const heatmapToggle = document.getElementById("heatmapToggle");
+const heatmapLegend = document.getElementById("heatmapLegend");
+const heatmapLegendMin = document.getElementById("heatmapLegendMin");
+const heatmapLegendMax = document.getElementById("heatmapLegendMax");
 const searchForm = document.getElementById("searchForm");
 const addressInput = document.getElementById("addressInput");
 const searchButton = document.getElementById("searchButton");
+const shareButton = document.getElementById("shareButton");
 const searchMeta = document.getElementById("searchMeta");
 const searchResults = document.getElementById("searchResults");
 const ctx = mapCanvas.getContext("2d");
@@ -57,6 +62,16 @@ function formatMinutes(minutes) {
   if (!Number.isFinite(minutes)) return "unreachable";
   if (minutes < 1) return "<1 min";
   return `${Math.round(minutes)} min`;
+}
+
+function formatShareTime(date = new Date()) {
+  return date.toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
 }
 
 function escapeHtml(value) {
@@ -634,6 +649,110 @@ function drawHoverTooltip(drawCtx, screenPoint, label) {
   drawCtx.restore();
 }
 
+function roundRectPath(drawCtx, x, y, width, height, radius) {
+  drawCtx.beginPath();
+  drawCtx.roundRect(x, y, width, height, radius);
+}
+
+function currentOriginSummary(fallbackStationName = "NYC subway") {
+  if (state.originLabel) return state.originLabel;
+  return `Near ${fallbackStationName}`;
+}
+
+function exportShareImage() {
+  const exportCanvas = document.createElement("canvas");
+  exportCanvas.width = 1080;
+  exportCanvas.height = 1350;
+  const exportCtx = exportCanvas.getContext("2d");
+
+  const bg = exportCtx.createLinearGradient(0, 0, 0, exportCanvas.height);
+  bg.addColorStop(0, "#fbf5ea");
+  bg.addColorStop(1, "#f2eadb");
+  exportCtx.fillStyle = bg;
+  exportCtx.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
+
+  exportCtx.fillStyle = "rgba(215, 92, 46, 0.1)";
+  exportCtx.beginPath();
+  exportCtx.arc(180, 150, 180, 0, Math.PI * 2);
+  exportCtx.fill();
+  exportCtx.fillStyle = "rgba(40, 112, 129, 0.08)";
+  exportCtx.beginPath();
+  exportCtx.arc(930, 190, 210, 0, Math.PI * 2);
+  exportCtx.fill();
+
+  exportCtx.fillStyle = "#d75c2e";
+  exportCtx.font = '700 28px "Avenir Next", "Helvetica Neue", Helvetica, sans-serif';
+  exportCtx.fillText("TRANSIT TIME CARTOGRAM", 72, 86);
+
+  exportCtx.fillStyle = "#17304d";
+  exportCtx.font = '700 58px "Avenir Next", "Helvetica Neue", Helvetica, sans-serif';
+  exportCtx.fillText("New York by commute time", 72, 150);
+
+  const nearestSeed = state.currentRender?.warp?.seeds?.[0];
+  const nearestStationName = nearestSeed ? state.data.stations[nearestSeed.index].name : "NYC subway";
+  const originSummary = currentOriginSummary(nearestStationName);
+  const modeSummary = state.pinned ? "Pinned origin" : "Live hover origin";
+  const heatmapSummary = state.showHeatmap ? "Heatmap on" : "Heatmap off";
+
+  exportCtx.fillStyle = "#5f6f7f";
+  exportCtx.font = '500 27px "Avenir Next", "Helvetica Neue", Helvetica, sans-serif';
+  exportCtx.fillText(`${modeSummary}: ${originSummary}`, 72, 198);
+  exportCtx.fillText(`${heatmapSummary} • Subway + walking access • ${formatShareTime()}`, 72, 236);
+
+  const cardX = 50;
+  const cardY = 280;
+  const cardSize = 980;
+  roundRectPath(exportCtx, cardX, cardY, cardSize, cardSize, 38);
+  exportCtx.fillStyle = "rgba(255, 252, 247, 0.92)";
+  exportCtx.fill();
+  exportCtx.strokeStyle = "rgba(23, 48, 77, 0.1)";
+  exportCtx.lineWidth = 2;
+  exportCtx.stroke();
+
+  const inset = 28;
+  const mapX = cardX + inset;
+  const mapY = cardY + inset;
+  const mapSize = cardSize - inset * 2;
+  roundRectPath(exportCtx, mapX, mapY, mapSize, mapSize, 28);
+  exportCtx.save();
+  exportCtx.clip();
+  exportCtx.drawImage(mapCanvas, mapX, mapY, mapSize, mapSize);
+  exportCtx.restore();
+
+  exportCtx.fillStyle = "#17304d";
+  exportCtx.font = '700 34px "Avenir Next", "Helvetica Neue", Helvetica, sans-serif';
+  exportCtx.fillText("castrio.me", 72, 1300);
+
+  exportCtx.textAlign = "right";
+  exportCtx.fillStyle = "#5f6f7f";
+  exportCtx.font = '500 24px "Avenir Next", "Helvetica Neue", Helvetica, sans-serif';
+  exportCtx.fillText("Data: MTA GTFS, NYC Open Data, OpenStreetMap", 1008, 1300);
+  exportCtx.textAlign = "left";
+
+  return exportCanvas;
+}
+
+async function downloadShareImage() {
+  shareButton.disabled = true;
+  shareButton.textContent = "Rendering…";
+  try {
+    requestDraw();
+    await new Promise((resolve) => window.requestAnimationFrame(() => resolve()));
+    const exportCanvas = exportShareImage();
+    const blob = await new Promise((resolve) => exportCanvas.toBlob(resolve, "image/png"));
+    if (!blob) throw new Error("Failed to create share image.");
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `nyc-commute-cartogram-${Date.now()}.png`;
+    link.click();
+    URL.revokeObjectURL(url);
+  } finally {
+    shareButton.disabled = false;
+    shareButton.textContent = "Share Image";
+  }
+}
+
 function requestDraw() {
   if (!state.ready || !state.dirty) return;
   state.dirty = false;
@@ -673,6 +792,12 @@ function withinBounds(point) {
 function syncPinButton() {
   pinButton.textContent = state.pinned ? "Click to Unpin" : "Click to Pin";
   pinButton.classList.toggle("active", state.pinned);
+}
+
+function syncHeatmapLegend() {
+  heatmapLegend.hidden = !state.showHeatmap;
+  heatmapLegendMin.textContent = "0m";
+  heatmapLegendMax.textContent = `${MAX_TIME_MINUTES}m`;
 }
 
 function clearSearchResults() {
@@ -719,6 +844,7 @@ function renderSearchResults(results) {
       addressInput.value = result.title;
       searchMeta.textContent = `Pinned origin to ${result.title}.`;
       clearSearchResults();
+      state.originLabel = result.title;
       setPinnedOrigin(worldPoint);
     });
   }
@@ -762,6 +888,7 @@ async function init() {
   state.data = await response.json();
   state.ready = true;
   heatmapToggle.checked = state.showHeatmap;
+  syncHeatmapLegend();
 
   const manhattan = state.data.boroughs.find((borough) => borough.name === "Manhattan");
   state.cursorPoint = manhattan ? manhattan.label : state.data.stations[0].point;
@@ -778,6 +905,7 @@ async function init() {
     state.cursorPoint = worldPoint;
     if (!state.pinned && (!state.originPoint || distance(state.originPoint, worldPoint) >= HOVER_DEADBAND)) {
       state.originPoint = worldPoint;
+      state.originLabel = null;
     }
     state.dirty = true;
     requestDraw();
@@ -790,6 +918,7 @@ async function init() {
     state.cursorPoint = worldPoint;
     if (!state.pinned) {
       state.originPoint = worldPoint;
+      state.originLabel = null;
       state.pinnedPoint = worldPoint;
       state.pinnedScreen = screenPoint;
       state.pinned = true;
@@ -798,6 +927,7 @@ async function init() {
       state.pinnedPoint = null;
       state.pinnedScreen = null;
       state.originPoint = worldPoint;
+      state.originLabel = null;
     }
     syncPinButton();
     state.dirty = true;
@@ -820,10 +950,12 @@ async function init() {
       state.pinnedScreen = null;
       if (state.cursorPoint) {
         state.originPoint = state.cursorPoint;
+        state.originLabel = null;
       }
     } else if (state.cursorPoint) {
       state.pinned = true;
       state.originPoint = state.cursorPoint;
+      state.originLabel = null;
       state.pinnedPoint = state.cursorPoint;
       state.pinnedScreen = state.cursorScreen;
     }
@@ -834,8 +966,17 @@ async function init() {
 
   heatmapToggle.addEventListener("change", () => {
     state.showHeatmap = heatmapToggle.checked;
+    syncHeatmapLegend();
     state.dirty = true;
     requestDraw();
+  });
+
+  shareButton.addEventListener("click", () => {
+    downloadShareImage().catch((error) => {
+      console.error(error);
+      shareButton.disabled = false;
+      shareButton.textContent = "Share Image";
+    });
   });
 
   searchForm.addEventListener("submit", async (event) => {
