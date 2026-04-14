@@ -719,13 +719,14 @@ function exportShareImage() {
   exportCtx.restore();
 
   if (state.showHeatmap) {
-    const legendWidth = 404;
-    const labelWidth = 58;
+    const legendWidth = 360;
+    const leftLabelWidth = 50;
+    const rightLabelWidth = 64;
     const legendX = cardX + cardSize - inset - legendWidth - 10;
     const legendY = cardY + cardSize - inset - 30;
-    const legendLineX = legendX + labelWidth;
+    const legendLineX = legendX + leftLabelWidth;
     const legendLineY = legendY;
-    const legendLineWidth = legendWidth - labelWidth * 2;
+    const legendLineWidth = legendWidth - leftLabelWidth - rightLabelWidth;
 
     exportCtx.font = '600 23px "Avenir Next", "Helvetica Neue", Helvetica, sans-serif';
     exportCtx.textBaseline = "middle";
