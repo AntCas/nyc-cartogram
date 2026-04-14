@@ -360,7 +360,10 @@ function drawMap(drawCtx, width, height) {
   const station = state.data.stations[nearest.index];
   if (state.pinned && state.cursorPoint) {
     const probeMinutes = estimateTravelMinutes(warp.distances, state.cursorPoint);
-    statusText.textContent = `${formatMinutes(probeMinutes)} by transit from the current cursor location to the pinned origin near ${station.name}.`;
+    statusText.textContent = `Pinned near ${station.name}. Hover anywhere to inspect commute time back to this origin.`;
+    if (state.cursorScreen) {
+      drawHoverTooltip(drawCtx, state.cursorScreen, `${formatMinutes(probeMinutes)} away`);
+    }
   } else {
     statusText.textContent = `Warped from near ${station.name}. Click to pin this origin, then hover to probe commute time back to it.`;
   }
@@ -386,6 +389,30 @@ function drawMarker(drawCtx, screenPoint, color, glowRadius, radius, glowAlpha =
   drawCtx.lineWidth = 2;
   drawCtx.strokeStyle = color;
   drawCtx.stroke();
+}
+
+function drawHoverTooltip(drawCtx, screenPoint, label) {
+  const [sx, sy] = screenPoint;
+  drawCtx.save();
+  drawCtx.font = '700 13px "Avenir Next", "Helvetica Neue", Helvetica, sans-serif';
+  drawCtx.textAlign = "center";
+  drawCtx.textBaseline = "middle";
+
+  const metrics = drawCtx.measureText(label);
+  const paddingX = 10;
+  const boxWidth = metrics.width + paddingX * 2;
+  const boxHeight = 28;
+  const boxX = clamp(sx - boxWidth / 2, 12, drawCtx.canvas.clientWidth - boxWidth - 12);
+  const boxY = clamp(sy + 16, 12, drawCtx.canvas.clientHeight - boxHeight - 12);
+
+  drawCtx.fillStyle = "rgba(23, 48, 77, 0.92)";
+  drawCtx.beginPath();
+  drawCtx.roundRect(boxX, boxY, boxWidth, boxHeight, 10);
+  drawCtx.fill();
+
+  drawCtx.fillStyle = "#fff8ef";
+  drawCtx.fillText(label, boxX + boxWidth / 2, boxY + boxHeight / 2 + 0.5);
+  drawCtx.restore();
 }
 
 function requestDraw() {
