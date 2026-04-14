@@ -399,6 +399,13 @@ canvas {
   flex: 1 1 auto;
 }
 
+.map-corner-button {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  z-index: 2;
+}
+
 .panel-card.is-immersive,
 .panel-card:fullscreen {
   width: 100vw;
