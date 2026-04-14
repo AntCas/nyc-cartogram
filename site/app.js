@@ -7,6 +7,7 @@ const PANEL_PADDING = 18;
 const ROUTE_LINE_WIDTH = 2.2;
 const WEIGHT_BLUR_PASSES = 2;
 const WEIGHT_BLUR_RADIUS = 2;
+const HOVER_DEADBAND = 14;
 const HEATMAP_RESOLUTION_SCALE = 2;
 const HEATMAP_BLUR_PX = 7;
 const HEATMAP_ALPHA = 0.8;
@@ -19,6 +20,7 @@ const state = {
   cursorScreen: null,
   originPoint: null,
   pinnedPoint: null,
+  pinnedScreen: null,
   pinned: false,
   transform: null,
   currentRender: null,
@@ -38,6 +40,13 @@ const ctx = mapCanvas.getContext("2d");
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
+}
+
+function clampToRange(value, min, max) {
+  if (min > max) {
+    return (min + max) / 2;
+  }
+  return clamp(value, min, max);
 }
 
 function distance(a, b) {
@@ -62,11 +71,12 @@ function escapeHtml(value) {
 function heatmapColor(minutes, alpha = 0.56) {
   const t = clamp(minutes / MAX_TIME_MINUTES, 0, 1);
   const stops = [
-    { t: 0, color: [232, 96, 53] },
-    { t: 0.25, color: [243, 175, 73] },
-    { t: 0.5, color: [242, 223, 153] },
-    { t: 0.75, color: [159, 198, 209] },
-    { t: 1, color: [81, 115, 152] },
+    { t: 0, color: [220, 69, 37] },
+    { t: 0.18, color: [244, 127, 46] },
+    { t: 0.36, color: [255, 196, 79] },
+    { t: 0.58, color: [248, 232, 156] },
+    { t: 0.78, color: [149, 188, 211] },
+    { t: 1, color: [74, 103, 141] },
   ];
   let left = stops[0];
   let right = stops[stops.length - 1];
@@ -105,6 +115,19 @@ function buildTransform(bounds, width, height, padding = PANEL_PADDING) {
     },
     toWorld(x, y) {
       return [minX + (x - offsetX) / scale, minY + (drawHeight - (y - offsetY)) / scale];
+    },
+  };
+}
+
+function offsetTransform(baseTransform, dx, dy) {
+  return {
+    scale: baseTransform.scale,
+    toScreen(point) {
+      const [sx, sy] = baseTransform.toScreen(point);
+      return [sx + dx, sy + dy];
+    },
+    toWorld(x, y) {
+      return baseTransform.toWorld(x - dx, y - dy);
     },
   };
 }
@@ -445,12 +468,30 @@ function drawHeatmap(drawCtx, warp, transform) {
 
 function drawMap(drawCtx, width, height) {
   drawPanelBackground(drawCtx, width, height);
-  if (!state.originPoint) return;
+  if (!state.originPoint || !state.transform) return;
 
   const warp = computeWarp(state.originPoint);
-  const transform = buildTransform(warp.warpedBounds, width, height, PANEL_PADDING);
+  const anchorScreen = state.pinned ? state.pinnedScreen : state.cursorScreen;
+  const baseTransform = state.transform;
+  const anchoredOrigin = baseTransform.toScreen(warp.warpPoint(state.originPoint));
+  const [warpMinX, warpMinY, warpMaxX, warpMaxY] = warp.warpedBounds;
+  const topLeft = baseTransform.toScreen([warpMinX, warpMaxY]);
+  const bottomRight = baseTransform.toScreen([warpMaxX, warpMinY]);
+  const leftBound = topLeft[0];
+  const topBound = topLeft[1];
+  const rightBound = bottomRight[0];
+  const bottomBound = bottomRight[1];
+  const desiredDx = anchorScreen ? anchorScreen[0] - anchoredOrigin[0] : 0;
+  const desiredDy = anchorScreen ? anchorScreen[1] - anchoredOrigin[1] : 0;
+  const minDx = PANEL_PADDING - leftBound;
+  const maxDx = width - PANEL_PADDING - rightBound;
+  const minDy = PANEL_PADDING - topBound;
+  const maxDy = height - PANEL_PADDING - bottomBound;
+  const dx = clampToRange(desiredDx, minDx, maxDx);
+  const dy = clampToRange(desiredDy, minDy, maxDy);
+  const transform = offsetTransform(baseTransform, dx, dy);
   const projectPoint = (point) => transform.toScreen(warp.warpPoint(point));
-  state.currentRender = { warp, transform };
+  state.currentRender = { warp, transform, anchorOffset: [dx, dy] };
 
   for (const borough of state.data.boroughs) {
     for (const polygon of borough.polygons) {
@@ -615,6 +656,8 @@ function pointerToWorld(event) {
   if (!state.currentRender) {
     return { screenPoint, worldPoint: state.transform.toWorld(x, y) };
   }
+  // Screen space is fixed, but the visible geography is warped. To recover the
+  // geographic point under the cursor, invert the warp currently on screen.
   const warpedWorld = state.currentRender.transform.toWorld(x, y);
   const worldPoint = state.currentRender.warp.inverseWarpPoint(warpedWorld);
   return { screenPoint, worldPoint };
@@ -637,6 +680,7 @@ function clearSearchResults() {
 function setPinnedOrigin(worldPoint) {
   state.originPoint = worldPoint;
   state.pinnedPoint = worldPoint;
+  state.pinnedScreen = null;
   state.pinned = true;
   state.cursorPoint = worldPoint;
   syncPinButton();
@@ -729,7 +773,7 @@ async function init() {
     if (!withinBounds(worldPoint)) return;
     state.cursorScreen = screenPoint;
     state.cursorPoint = worldPoint;
-    if (!state.pinned) {
+    if (!state.pinned && (!state.originPoint || distance(state.originPoint, worldPoint) >= HOVER_DEADBAND)) {
       state.originPoint = worldPoint;
     }
     state.dirty = true;
@@ -744,10 +788,12 @@ async function init() {
     if (!state.pinned) {
       state.originPoint = worldPoint;
       state.pinnedPoint = worldPoint;
+      state.pinnedScreen = screenPoint;
       state.pinned = true;
     } else {
       state.pinned = false;
       state.pinnedPoint = null;
+      state.pinnedScreen = null;
       state.originPoint = worldPoint;
     }
     syncPinButton();
@@ -768,6 +814,7 @@ async function init() {
     if (state.pinned) {
       state.pinned = false;
       state.pinnedPoint = null;
+      state.pinnedScreen = null;
       if (state.cursorPoint) {
         state.originPoint = state.cursorPoint;
       }
@@ -775,6 +822,7 @@ async function init() {
       state.pinned = true;
       state.originPoint = state.cursorPoint;
       state.pinnedPoint = state.cursorPoint;
+      state.pinnedScreen = state.cursorScreen;
     }
     syncPinButton();
     state.dirty = true;
