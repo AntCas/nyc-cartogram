@@ -44,21 +44,23 @@
                 <span class="toggle-track"><span class="toggle-thumb"></span></span>
                 <span class="toggle-label">heatmap</span>
               </label>
-              <button id="shareButton" class="pin-button share-button icon-button" type="button" aria-label="Save image" title="Save image">
-                <svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true">
-                  <path d="M12 21l-8-9h6v-12h4v12h6l-8 9zm9-1v2h-18v-2h-2v4h22v-4h-2z" />
-                </svg>
-              </button>
               <button id="pinButton" class="pin-button" type="button">Pin origin</button>
             </div>
           </div>
           <div class="map-frame">
             <canvas id="mapCanvas" aria-label="Warped map of New York City by transit time"></canvas>
-            <button id="fullscreenButton" class="pin-button share-button icon-button map-corner-button" type="button" aria-label="Enter full screen" title="Enter full screen">
-              <svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M24 9h-2v-5h-7v-2h9v7zm-9 13v-2h7v-5h2v7h-9zm-15-7h2v5h7v2h-9v-7zm9-13v2h-7v5h-2v-7h9z" />
-              </svg>
-            </button>
+            <div class="map-corner-actions">
+              <button id="fullscreenButton" class="pin-button share-button icon-button map-corner-button" type="button" aria-label="Enter full screen" title="Enter full screen">
+                <svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M24 9h-2v-5h-7v-2h9v7zm-9 13v-2h7v-5h2v7h-9zm-15-7h2v5h7v2h-9v-7zm9-13v2h-7v5h-2v-7h9z" />
+                </svg>
+              </button>
+              <button id="shareButton" class="pin-button share-button icon-button map-corner-button" type="button" aria-label="Save image" title="Save image">
+                <svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M12 21l-8-9h6v-12h4v12h6l-8 9zm9-1v2h-18v-2h-2v4h22v-4h-2z" />
+                </svg>
+              </button>
+            </div>
             <div id="heatmapLegend" class="legend legend-overlay" aria-live="polite">
               <span id="heatmapLegendMin">0m</span>
               <div class="legend-scale" aria-hidden="true"></div>
