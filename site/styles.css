@@ -185,6 +185,10 @@ body {
   color: var(--ink);
   border: 1px solid rgba(23, 48, 77, 0.14);
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.38);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
 }
 
 .share-button:hover {
@@ -195,6 +199,13 @@ body {
   cursor: progress;
   opacity: 0.72;
   transform: none;
+}
+
+.button-icon {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+  flex: 0 0 auto;
 }
 
 .toggle-control {

@@ -42,6 +42,7 @@ const shareButton = document.getElementById("shareButton");
 const searchMeta = document.getElementById("searchMeta");
 const searchResults = document.getElementById("searchResults");
 const ctx = mapCanvas.getContext("2d");
+const SHARE_BUTTON_LABEL = "Save";
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -72,6 +73,11 @@ function formatShareTime(date = new Date()) {
     hour: "numeric",
     minute: "2-digit",
   });
+}
+
+function setShareButtonLabel(label) {
+  const text = shareButton.querySelector("span");
+  if (text) text.textContent = label;
 }
 
 function escapeHtml(value) {
@@ -719,6 +725,40 @@ function exportShareImage() {
   exportCtx.drawImage(mapCanvas, mapX, mapY, mapSize, mapSize);
   exportCtx.restore();
 
+  if (state.showHeatmap) {
+    const legendWidth = 392;
+    const labelWidth = 48;
+    const legendX = cardX + cardSize - inset - legendWidth;
+    const legendY = cardY + cardSize - inset - 30;
+    const legendLineX = legendX + labelWidth;
+    const legendLineY = legendY;
+    const legendLineWidth = legendWidth - labelWidth * 2;
+
+    exportCtx.font = '700 24px "Avenir Next", "Helvetica Neue", Helvetica, sans-serif';
+    exportCtx.textBaseline = "middle";
+    exportCtx.fillStyle = "#17304d";
+    exportCtx.fillText("0m", legendX, legendY);
+
+    const legendGradient = exportCtx.createLinearGradient(legendLineX, legendLineY, legendLineX + legendLineWidth, legendLineY);
+    legendGradient.addColorStop(0, "#dc4525");
+    legendGradient.addColorStop(0.18, "#f47f2e");
+    legendGradient.addColorStop(0.36, "#ffc44f");
+    legendGradient.addColorStop(0.58, "#f8e89c");
+    legendGradient.addColorStop(0.78, "#95bcd3");
+    legendGradient.addColorStop(1, "#4a678d");
+    exportCtx.strokeStyle = legendGradient;
+    exportCtx.lineWidth = 16;
+    exportCtx.lineCap = "round";
+    exportCtx.beginPath();
+    exportCtx.moveTo(legendLineX, legendLineY);
+    exportCtx.lineTo(legendLineX + legendLineWidth, legendLineY);
+    exportCtx.stroke();
+
+    exportCtx.textAlign = "right";
+    exportCtx.fillText(`${MAX_TIME_MINUTES}m`, legendX + legendWidth, legendY);
+    exportCtx.textAlign = "left";
+  }
+
   exportCtx.fillStyle = "#17304d";
   exportCtx.font = '700 34px "Avenir Next", "Helvetica Neue", Helvetica, sans-serif';
   exportCtx.fillText("castrio.me", 72, 1300);
@@ -734,7 +774,7 @@ function exportShareImage() {
 
 async function downloadShareImage() {
   shareButton.disabled = true;
-  shareButton.textContent = "Rendering…";
+  setShareButtonLabel("Rendering…");
   try {
     requestDraw();
     await new Promise((resolve) => window.requestAnimationFrame(() => resolve()));
@@ -749,7 +789,7 @@ async function downloadShareImage() {
     URL.revokeObjectURL(url);
   } finally {
     shareButton.disabled = false;
-    shareButton.textContent = "Share Image";
+    setShareButtonLabel(SHARE_BUTTON_LABEL);
   }
 }
 
@@ -975,7 +1015,7 @@ async function init() {
     downloadShareImage().catch((error) => {
       console.error(error);
       shareButton.disabled = false;
-      shareButton.textContent = "Share Image";
+      setShareButtonLabel(SHARE_BUTTON_LABEL);
     });
   });
 
