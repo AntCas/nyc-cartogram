@@ -754,12 +754,12 @@ function exportShareImage() {
   }
 
   exportCtx.fillStyle = "#17304d";
-  exportCtx.font = '700 34px "Avenir Next", "Helvetica Neue", Helvetica, sans-serif';
-  exportCtx.fillText("castrio.me", 72, 1300);
+  exportCtx.font = '700 24px "Avenir Next", "Helvetica Neue", Helvetica, sans-serif';
+  exportCtx.fillText("castrio.me/nyc-cartogram", 72, 1300);
 
   exportCtx.textAlign = "right";
   exportCtx.fillStyle = "#5f6f7f";
-  exportCtx.font = '500 24px "Avenir Next", "Helvetica Neue", Helvetica, sans-serif';
+  exportCtx.font = '500 12px "Avenir Next", "Helvetica Neue", Helvetica, sans-serif';
   exportCtx.fillText("Data: MTA GTFS, NYC Open Data, OpenStreetMap", 1008, 1300);
   exportCtx.textAlign = "left";
 
