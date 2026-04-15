@@ -1,4 +1,4 @@
-const PATH_PREFIX = "/nyc-cartogram";
+const PATH_PREFIX = "/nyc";
 
 function withoutPrefix(pathname) {
   if (pathname === PATH_PREFIX) return "/";

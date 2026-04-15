@@ -2,7 +2,7 @@
 
 This project generates a subway-access weighted map of New York City as an SVG and interactive web app.
 
-You can check it out here: https://castrio.me/nyc-cartogram
+You can check it out here: https://castrio.me/nyc
 
 <img width="1080" height="1350" alt="nyc-commute-cartogram-1776207855190" src="https://github.com/user-attachments/assets/38889219-dcd5-405c-b79e-56bfebc420b5" />
 
@@ -55,15 +55,15 @@ pnpm run deploy
 
 This repo includes:
 - [wrangler.jsonc](/Users/primaryuser/Desktop/nyc-projection/wrangler.jsonc) to upload the `site/` directory as static assets
-- [src/worker.js](/Users/primaryuser/Desktop/nyc-projection/src/worker.js) to serve the site from the `/nyc-cartogram/` path prefix on `castrio.me`
+- [src/worker.js](/Users/primaryuser/Desktop/nyc-projection/src/worker.js) to serve the site from the `/nyc/` path prefix on `castrio.me`
 
 Deploy notes:
-- The Worker serves the app at `https://castrio.me/nyc-cartogram/`.
-- `src/worker.js` redirects `/nyc-cartogram` to `/nyc-cartogram/` and strips the `/nyc-cartogram` prefix before fetching bundled assets.
-- Static assets are bundled from `site/`, so requests like `/nyc-cartogram/styles.css`, `/nyc-cartogram/app.js`, `/nyc-cartogram/favicon.svg`, and `/nyc-cartogram/data/commute_map_data.json` are all handled by the Worker deployment.
+- The Worker serves the app at `https://castrio.me/nyc/`.
+- `src/worker.js` redirects `/nyc` to `/nyc/` and strips the `/nyc` prefix before fetching bundled assets.
+- Static assets are bundled from `site/`, so requests like `/nyc/styles.css`, `/nyc/app.js`, `/nyc/favicon.svg`, and `/nyc/data/commute_map_data.json` are all handled by the Worker deployment.
 - Disable any older Cloudflare URL Rewrite Rules or Cloud Connector routes for this app path. They can conflict with the Worker and cause 404s.
 - If this is your first local `pnpm` install and Wrangler dependencies were blocked, run `pnpm approve-builds` and approve the relevant packages before deploying again.
-- For local development, open `http://localhost:8000/site/`. For production, use `https://castrio.me/nyc-cartogram/`.
+- For local development, open `http://localhost:8000/site/`. For production, use `https://castrio.me/nyc/`.
 
 Notes:
 - The map now uses a single shared geographic projection for boroughs, stations, route shapes, parks, and streets so transit layers stay aligned to the basemap.

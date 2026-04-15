@@ -1416,7 +1416,7 @@ function exportShareImage() {
 
   exportCtx.fillStyle = "#17304d";
   exportCtx.font = '700 24px "Avenir Next", "Helvetica Neue", Helvetica, sans-serif';
-  exportCtx.fillText("castrio.me/nyc-cartogram", 72, 1300);
+  exportCtx.fillText("castrio.me/nyc", 72, 1300);
 
   exportCtx.textAlign = "right";
   exportCtx.fillStyle = "#5f6f7f";

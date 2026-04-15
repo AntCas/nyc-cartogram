@@ -7,9 +7,9 @@
     <script>
       (function () {
         const path = window.location.pathname;
-        const isSubpathDeploy = path === "/nyc-cartogram" || path.startsWith("/nyc-cartogram/");
+        const isSubpathDeploy = path === "/nyc" || path.startsWith("/nyc/");
         const assetBase = isSubpathDeploy
-          ? "/nyc-cartogram/"
+          ? "/nyc/"
           : path.endsWith("/")
             ? path
             : path.slice(0, path.lastIndexOf("/") + 1);
