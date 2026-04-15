@@ -1,6 +1,6 @@
 const DATA_URL = new URL("./data/commute_map_data.json", import.meta.url).toString();
 const ENTRY_WAIT_MINUTES = 2.5;
-const MAX_TIME_MINUTES = 80;
+const MAX_TIME_MINUTES = 90;
 const MIN_AREA_WEIGHT = 1;
 const MAX_AREA_WEIGHT = 2.67;
 const PANEL_PADDING = 18;
