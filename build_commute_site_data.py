@@ -391,7 +391,7 @@ def build_station_data(lat0: float) -> Tuple[list, Dict[str, int], Dict[str, str
 def build_routes_and_shapes(lat0: float, bbox: Tuple[float, float, float, float]) -> Tuple[dict, list, dict]:
     route_styles = {}
     for row in read_csv_from_zip(GTFS_PATH, "routes.txt"):
-        if row.get("route_type") != "1":
+        if row.get("route_type") != "1" and row.get("route_id") != "SI":
             continue
         route_styles[row["route_id"]] = {
             "color": f"#{row['route_color'] or '808183'}",
