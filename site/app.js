@@ -1,7 +1,7 @@
 const DATA_URL = "./data/commute_map_data.json";
 const ENTRY_WAIT_MINUTES = 2.5;
 const MAX_TIME_MINUTES = 80;
-const MIN_AREA_WEIGHT = 0.24;
+const MIN_AREA_WEIGHT = 1;
 const MAX_AREA_WEIGHT = 2.67;
 const PANEL_PADDING = 18;
 const ROUTE_LINE_WIDTH = 2.2;
@@ -13,8 +13,8 @@ const HEATMAP_BLUR_PX = 7;
 const HEATMAP_ALPHA = 0.8;
 const WARP_INFLUENCE_RADIUS = 8;
 const WARP_SIGMA_CELLS = 3.4;
-const WARP_DISPLACEMENT_SCALE = 0.78;
-const WARP_MAX_SHIFT_CELLS = 2.2;
+const WARP_DISPLACEMENT_SCALE = 2.34;
+const WARP_MAX_SHIFT_CELLS = 6.6;
 const WARP_NODE_SMOOTHING_PASSES = 2;
 const WARP_EDGE_FADE_CELLS = 10;
 
@@ -89,6 +89,24 @@ function triangleArea(a, b, c) {
 
 function quadArea(p00, p10, p11, p01) {
   return triangleArea(p00, p10, p11) + triangleArea(p00, p11, p01);
+}
+
+function barycentricWeights(point, a, b, c) {
+  const denominator = (b[1] - c[1]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[1] - c[1]);
+  if (Math.abs(denominator) < 1e-9) return null;
+  const w1 = ((b[1] - c[1]) * (point[0] - c[0]) + (c[0] - b[0]) * (point[1] - c[1])) / denominator;
+  const w2 = ((c[1] - a[1]) * (point[0] - c[0]) + (a[0] - c[0]) * (point[1] - c[1])) / denominator;
+  const w3 = 1 - w1 - w2;
+  const epsilon = 1e-5;
+  if (w1 < -epsilon || w2 < -epsilon || w3 < -epsilon) return null;
+  return [w1, w2, w3];
+}
+
+function interpolateTriangle(weights, a, b, c) {
+  return [
+    weights[0] * a[0] + weights[1] * b[0] + weights[2] * c[0],
+    weights[0] * a[1] + weights[1] * b[1] + weights[2] * c[1],
+  ];
 }
 
 function formatMinutes(minutes) {
@@ -460,15 +478,71 @@ function computeWarp(originPoint) {
   }
 
   function inverseWarpPoint(point) {
-    let guess = [point[0], point[1]];
-    for (let iteration = 0; iteration < 7; iteration += 1) {
-      const projected = warpPoint(guess);
-      guess = [
-        clamp(guess[0] + (point[0] - projected[0]), minX, maxX),
-        clamp(guess[1] + (point[1] - projected[1]), minY, maxY),
-      ];
+    const approximate = (() => {
+      let guess = [point[0], point[1]];
+      for (let iteration = 0; iteration < 6; iteration += 1) {
+        const projected = warpPoint(guess);
+        guess = [
+          clamp(guess[0] + (point[0] - projected[0]), minX, maxX),
+          clamp(guess[1] + (point[1] - projected[1]), minY, maxY),
+        ];
+      }
+      return guess;
+    })();
+
+    const approxCol = clamp(Math.floor((approximate[0] - minX) / cellW), 0, gridCols - 1);
+    const approxRow = clamp(Math.floor((approximate[1] - minY) / cellH), 0, gridRows - 1);
+
+    function solveCell(row, col) {
+      if (row < 0 || row >= gridRows || col < 0 || col >= gridCols) return null;
+      const p00 = warpNodes[row][col];
+      const p10 = warpNodes[row][col + 1];
+      const p11 = warpNodes[row + 1][col + 1];
+      const p01 = warpNodes[row + 1][col];
+
+      const upperWeights = barycentricWeights(point, p00, p10, p11);
+      if (upperWeights) {
+        return interpolateTriangle(
+          upperWeights,
+          [minX + col * cellW, minY + row * cellH],
+          [minX + (col + 1) * cellW, minY + row * cellH],
+          [minX + (col + 1) * cellW, minY + (row + 1) * cellH],
+        );
+      }
+
+      const lowerWeights = barycentricWeights(point, p00, p11, p01);
+      if (lowerWeights) {
+        return interpolateTriangle(
+          lowerWeights,
+          [minX + col * cellW, minY + row * cellH],
+          [minX + (col + 1) * cellW, minY + (row + 1) * cellH],
+          [minX + col * cellW, minY + (row + 1) * cellH],
+        );
+      }
+
+      return null;
     }
-    return guess;
+
+    for (let radius = 0; radius <= 8; radius += 1) {
+      for (let row = approxRow - radius; row <= approxRow + radius; row += 1) {
+        for (let col = approxCol - radius; col <= approxCol + radius; col += 1) {
+          if (radius > 0 && row > approxRow - radius && row < approxRow + radius && col > approxCol - radius && col < approxCol + radius) {
+            continue;
+          }
+          const solved = solveCell(row, col);
+          if (solved) return solved;
+        }
+      }
+    }
+
+    for (let row = 0; row < gridRows; row += 1) {
+      for (let col = 0; col < gridCols; col += 1) {
+        const solved = solveCell(row, col);
+        if (solved) return solved;
+      }
+    }
+
+    return approximate;
   }
 
   const allWarpedNodes = warpNodes.flat();
@@ -663,13 +737,11 @@ function drawMap(drawCtx, width, height) {
   }
 
   const warp = state.showWarp || state.showHeatmap ? computeWarp(state.originPoint) : null;
-  // Keep hover-mode geography fixed in the frame. We only lock the warped map
-  // to a chosen screen point once the user pins an origin.
-  const anchorScreen = state.showWarp && state.pinned ? state.pinnedScreen : null;
   const baseTransform = state.transform;
   const warpPoint = state.showWarp && warp ? warp.warpPoint : (point) => point;
   const inverseWarpPoint = warp ? warp.inverseWarpPoint : (point) => point;
   const warpedBounds = state.showWarp && warp ? warp.warpedBounds : state.data.meta.bounds;
+  const anchorScreen = state.showWarp && state.pinned ? state.pinnedScreen : null;
   const anchoredOrigin = baseTransform.toScreen(warpPoint(state.originPoint));
   const [warpMinX, warpMinY, warpMaxX, warpMaxY] = warpedBounds;
   const topLeft = baseTransform.toScreen([warpMinX, warpMaxY]);
@@ -1145,7 +1217,10 @@ async function init() {
   });
 
   mapCanvas.addEventListener("click", (event) => {
-    const { screenPoint, worldPoint } = pointerToWorld(event);
+    const hovered = state.cursorScreen && state.cursorPoint;
+    const { screenPoint, worldPoint } = hovered
+      ? { screenPoint: state.cursorScreen.slice(), worldPoint: state.cursorPoint.slice() }
+      : pointerToWorld(event);
     if (!withinBounds(worldPoint)) return;
     state.cursorScreen = screenPoint;
     state.cursorPoint = worldPoint;

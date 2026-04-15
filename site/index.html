@@ -4,8 +4,19 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>NYC Commute POV</title>
-    <link rel="icon" type="image/x-icon" href="./favicon.ico" />
-    <link rel="shortcut icon" href="./favicon.ico" />
+    <script>
+      (function () {
+        const path = window.location.pathname;
+        const isSubpathDeploy = path === "/nyc-cartogram" || path.startsWith("/nyc-cartogram/");
+        const baseHref = isSubpathDeploy
+          ? "/nyc-cartogram/"
+          : path.endsWith("/")
+            ? path
+            : path.slice(0, path.lastIndexOf("/") + 1);
+        document.write(`<base href="${baseHref}">`);
+      })();
+    </script>
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
