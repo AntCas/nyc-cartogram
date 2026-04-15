@@ -1340,6 +1340,40 @@ function exportShareImage() {
   exportCtx.save();
   exportCtx.clip();
   exportCtx.drawImage(mapCanvas, mapX, mapY, mapSize, mapSize);
+
+  const reachability = state.currentRender?.warp?.reachability ?? null;
+  if (reachability) {
+    const badgeX = mapX + 26;
+    const badgeY = mapY + 24;
+    const badgeWidth = 310;
+    const badgeHeight = 110;
+    const percent = Math.round(reachability.ratio * 100);
+
+    exportCtx.fillStyle = "rgba(255, 252, 247, 0.9)";
+    exportCtx.beginPath();
+    exportCtx.roundRect(badgeX, badgeY, badgeWidth, badgeHeight, 22);
+    exportCtx.fill();
+
+    exportCtx.strokeStyle = "rgba(23, 48, 77, 0.12)";
+    exportCtx.lineWidth = 1.5;
+    exportCtx.stroke();
+
+    exportCtx.fillStyle = "#5f6f7f";
+    exportCtx.font = '700 17px "Avenir Next", "Helvetica Neue", Helvetica, sans-serif';
+    exportCtx.fillText("60-MINUTE REACH", badgeX + 20, badgeY + 26);
+
+    exportCtx.fillStyle = "#17304d";
+    exportCtx.font = '700 42px "Avenir Next", "Helvetica Neue", Helvetica, sans-serif';
+    exportCtx.fillText(
+      `${reachability.reachableStations} / ${reachability.totalStations}`,
+      badgeX + 20,
+      badgeY + 68,
+    );
+
+    exportCtx.fillStyle = "#5f6f7f";
+    exportCtx.font = '500 18px "Avenir Next", "Helvetica Neue", Helvetica, sans-serif';
+    exportCtx.fillText(`${percent}% of stations within 60 min`, badgeX + 20, badgeY + 94);
+  }
   exportCtx.restore();
 
   if (state.showHeatmap) {
