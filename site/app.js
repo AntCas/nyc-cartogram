@@ -57,6 +57,7 @@ const searchButton = document.getElementById("searchButton");
 const shareButton = document.getElementById("shareButton");
 const searchMeta = document.getElementById("searchMeta");
 const searchResults = document.getElementById("searchResults");
+const reachScoreCard = document.getElementById("reachScoreCard");
 const reachScoreValue = document.getElementById("reachScoreValue");
 const reachScoreMeta = document.getElementById("reachScoreMeta");
 const ctx = mapCanvas.getContext("2d");
@@ -756,11 +757,13 @@ function summarizeReachability(origin, originDistances) {
 
 function syncReachabilityScore(summary = null) {
   if (!summary) {
+    reachScoreCard.hidden = true;
     reachScoreValue.textContent = "-- / --";
     reachScoreMeta.textContent = "Choose an origin to see how much of the subway you can reach in an hour.";
     return;
   }
 
+  reachScoreCard.hidden = false;
   const percent = Math.round(summary.ratio * 100);
   reachScoreValue.textContent = `${summary.reachableStations} / ${summary.totalStations}`;
   reachScoreMeta.textContent = `${percent}% of stations are reachable within ${REACHABILITY_THRESHOLD_MINUTES} minutes.`;

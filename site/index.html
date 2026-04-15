@@ -40,11 +40,6 @@
           </p>
         </div>
         <div class="hero-stats">
-          <section class="stat score-card" aria-live="polite">
-            <span class="stat-label">60-Minute Reach</span>
-            <strong id="reachScoreValue" class="score-value">-- / --</strong>
-            <p id="reachScoreMeta" class="score-meta">Choose an origin to see how much of the subway you can reach in an hour.</p>
-          </section>
           <form id="searchForm" class="stat search-card" autocomplete="off">
             <label class="stat-label" for="addressInput">Pin by Address</label>
             <div class="search-row">
@@ -79,6 +74,11 @@
           </div>
           <div class="map-frame">
             <canvas id="mapCanvas" aria-label="Warped map of New York City by transit time"></canvas>
+            <section id="reachScoreCard" class="map-score-card" aria-live="polite" hidden>
+              <span class="map-score-label">60-Minute Reach</span>
+              <strong id="reachScoreValue" class="map-score-value">-- / --</strong>
+              <p id="reachScoreMeta" class="map-score-meta">Choose an origin to see how much of the subway you can reach in an hour.</p>
+            </section>
             <div class="map-corner-actions">
               <button id="fullscreenButton" class="pin-button share-button icon-button map-corner-button" type="button" aria-label="Enter full screen" title="Enter full screen">
                 <svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true">

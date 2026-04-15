@@ -273,26 +273,6 @@ body {
   gap: 10px;
 }
 
-.score-card {
-  display: grid;
-  gap: 6px;
-  align-content: start;
-}
-
-.score-value {
-  font-size: clamp(2rem, 4vw, 3rem);
-  line-height: 0.92;
-  letter-spacing: -0.05em;
-  color: var(--ink);
-}
-
-.score-meta {
-  margin: 0;
-  color: var(--muted);
-  font-size: 0.88rem;
-  line-height: 1.45;
-}
-
 .search-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 126px;
@@ -431,6 +411,49 @@ canvas {
 
 .map-corner-button {
   position: static;
+}
+
+.map-score-card {
+  position: absolute;
+  top: 18px;
+  left: 18px;
+  z-index: 2;
+  width: min(320px, calc(100% - 92px));
+  padding: 14px 16px 15px;
+  border-radius: 20px;
+  border: 1px solid rgba(23, 48, 77, 0.12);
+  background: rgba(255, 252, 247, 0.9);
+  backdrop-filter: blur(14px);
+  box-shadow: 0 18px 40px rgba(23, 48, 77, 0.12);
+}
+
+.map-score-card[hidden] {
+  display: none;
+}
+
+.map-score-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.map-score-value {
+  display: block;
+  font-size: clamp(1.8rem, 3.2vw, 2.6rem);
+  line-height: 0.95;
+  letter-spacing: -0.05em;
+  color: var(--ink);
+}
+
+.map-score-meta {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 0.84rem;
+  line-height: 1.4;
 }
 
 .panel-card.is-immersive,
@@ -588,5 +611,12 @@ canvas {
     right: 14px;
     bottom: 14px;
     min-width: 250px;
+  }
+
+  .map-score-card {
+    top: 14px;
+    left: 14px;
+    width: min(260px, calc(100% - 84px));
+    padding: 12px 14px 13px;
   }
 }
