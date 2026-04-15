@@ -11,6 +11,12 @@ const HOVER_DEADBAND = 14;
 const HEATMAP_RESOLUTION_SCALE = 2;
 const HEATMAP_BLUR_PX = 7;
 const HEATMAP_ALPHA = 0.8;
+const WARP_INFLUENCE_RADIUS = 8;
+const WARP_SIGMA_CELLS = 3.4;
+const WARP_DISPLACEMENT_SCALE = 0.78;
+const WARP_MAX_SHIFT_CELLS = 2.2;
+const WARP_NODE_SMOOTHING_PASSES = 2;
+const WARP_EDGE_FADE_CELLS = 10;
 
 const state = {
   data: null,
@@ -57,8 +63,32 @@ function clampToRange(value, min, max) {
   return clamp(value, min, max);
 }
 
+function smoothstep(edge0, edge1, value) {
+  const t = clamp((value - edge0) / ((edge1 - edge0) || 1), 0, 1);
+  return t * t * (3 - 2 * t);
+}
+
 function distance(a, b) {
   return Math.hypot(a[0] - b[0], a[1] - b[1]);
+}
+
+function lerp(a, b, t) {
+  return a + (b - a) * t;
+}
+
+function bilerpPoint(p00, p10, p01, p11, tx, ty) {
+  return [
+    lerp(lerp(p00[0], p10[0], tx), lerp(p01[0], p11[0], tx), ty),
+    lerp(lerp(p00[1], p10[1], tx), lerp(p01[1], p11[1], tx), ty),
+  ];
+}
+
+function triangleArea(a, b, c) {
+  return Math.abs((a[0] * (b[1] - c[1]) + b[0] * (c[1] - a[1]) + c[0] * (a[1] - b[1])) / 2);
+}
+
+function quadArea(p00, p10, p11, p01) {
+  return triangleArea(p00, p10, p11) + triangleArea(p00, p11, p01);
 }
 
 function formatMinutes(minutes) {
@@ -287,8 +317,6 @@ function computeWarp(originPoint) {
   const cellH = spanY / gridRows;
   const minuteGrid = Array.from({ length: gridRows }, () => new Array(gridCols).fill(Infinity));
   const validMask = Array.from({ length: gridRows }, () => new Array(gridCols).fill(false));
-  const columnMass = new Array(gridCols).fill(0);
-  const rowMass = new Array(gridRows).fill(0);
 
   for (let maskIndex = 0; maskIndex < state.data.mask.length; maskIndex += 1) {
     const cellIndex = state.data.mask[maskIndex];
@@ -326,93 +354,138 @@ function computeWarp(originPoint) {
   }
 
   const areaWeights = Array.from({ length: gridRows }, () => new Array(gridCols).fill(0));
+  const anomalyGrid = Array.from({ length: gridRows }, () => new Array(gridCols).fill(0));
 
   for (let row = 0; row < gridRows; row += 1) {
     for (let col = 0; col < gridCols; col += 1) {
       if (!validMask[row][col]) continue;
       const areaWeight = minuteToAreaWeight(smoothedMinutes[row][col]);
       areaWeights[row][col] = areaWeight;
-      columnMass[col] += areaWeight;
-      rowMass[row] += areaWeight;
+      anomalyGrid[row][col] = areaWeight - 1;
     }
   }
 
-  function normalize(values) {
-    const minimum = 1e-9;
-    const adjusted = values.map((value) => Math.max(value, minimum));
-    const total = adjusted.reduce((sum, value) => sum + value, 0);
-    return adjusted.map((value) => value / total);
-  }
+  const warpNodes = Array.from({ length: gridRows + 1 }, () => new Array(gridCols + 1).fill(null));
+  const sigmaSq = WARP_SIGMA_CELLS * WARP_SIGMA_CELLS;
+  const maxShiftX = cellW * WARP_MAX_SHIFT_CELLS;
+  const maxShiftY = cellH * WARP_MAX_SHIFT_CELLS;
 
-  function cumulativeEdges(masses, start, span) {
-    const edges = [start];
-    let cursor = start;
-    for (const mass of masses) {
-      cursor += mass * span;
-      edges.push(cursor);
+  for (let nodeRow = 0; nodeRow <= gridRows; nodeRow += 1) {
+    for (let nodeCol = 0; nodeCol <= gridCols; nodeCol += 1) {
+      const baseX = minX + nodeCol * cellW;
+      const baseY = minY + nodeRow * cellH;
+      let offsetX = 0;
+      let offsetY = 0;
+
+      const rowStart = Math.max(0, nodeRow - WARP_INFLUENCE_RADIUS);
+      const rowEnd = Math.min(gridRows - 1, nodeRow + WARP_INFLUENCE_RADIUS - 1);
+      const colStart = Math.max(0, nodeCol - WARP_INFLUENCE_RADIUS);
+      const colEnd = Math.min(gridCols - 1, nodeCol + WARP_INFLUENCE_RADIUS - 1);
+
+      for (let row = rowStart; row <= rowEnd; row += 1) {
+        for (let col = colStart; col <= colEnd; col += 1) {
+          if (!validMask[row][col]) continue;
+          const anomaly = anomalyGrid[row][col];
+          if (Math.abs(anomaly) < 1e-6) continue;
+          const centerX = minX + (col + 0.5) * cellW;
+          const centerY = minY + (row + 0.5) * cellH;
+          const dxCells = (baseX - centerX) / cellW;
+          const dyCells = (baseY - centerY) / cellH;
+          const distSqCells = dxCells * dxCells + dyCells * dyCells;
+          const distCells = Math.sqrt(distSqCells + 1e-9);
+          const gaussian = Math.exp(-distSqCells / (2 * sigmaSq));
+          const strength = anomaly * gaussian * WARP_DISPLACEMENT_SCALE;
+          offsetX += (dxCells / distCells) * strength * cellW;
+          offsetY += (dyCells / distCells) * strength * cellH;
+        }
+      }
+
+      offsetX = clamp(offsetX, -maxShiftX, maxShiftX);
+      offsetY = clamp(offsetY, -maxShiftY, maxShiftY);
+
+      const edgeDistance = Math.min(nodeCol, gridCols - nodeCol, nodeRow, gridRows - nodeRow);
+      const edgeFade = smoothstep(0, WARP_EDGE_FADE_CELLS, edgeDistance);
+      warpNodes[nodeRow][nodeCol] = [baseX + offsetX * edgeFade, baseY + offsetY * edgeFade];
     }
-    edges[edges.length - 1] = start + span;
-    return edges;
   }
 
-  const xEdges = cumulativeEdges(normalize(columnMass), minX, spanX);
-  const yEdges = cumulativeEdges(normalize(rowMass), minY, spanY);
-
-  function interpolateWarp(value, start, cellSize, edges, count) {
-    if (value <= start) return edges[0];
-    const end = start + cellSize * count;
-    if (value >= end) return edges[edges.length - 1];
-    const rawIndex = (value - start) / cellSize;
-    const index = clamp(Math.floor(rawIndex), 0, count - 1);
-    const fraction = rawIndex - index;
-    return edges[index] + (edges[index + 1] - edges[index]) * fraction;
+  for (let pass = 0; pass < WARP_NODE_SMOOTHING_PASSES; pass += 1) {
+    const nextNodes = warpNodes.map((row) => row.map((point) => point.slice()));
+    for (let nodeRow = 1; nodeRow < gridRows; nodeRow += 1) {
+      for (let nodeCol = 1; nodeCol < gridCols; nodeCol += 1) {
+        let totalX = 0;
+        let totalY = 0;
+        let count = 0;
+        for (let y = nodeRow - 1; y <= nodeRow + 1; y += 1) {
+          for (let x = nodeCol - 1; x <= nodeCol + 1; x += 1) {
+            totalX += warpNodes[y][x][0];
+            totalY += warpNodes[y][x][1];
+            count += 1;
+          }
+        }
+        const edgeDistance = Math.min(nodeCol, gridCols - nodeCol, nodeRow, gridRows - nodeRow);
+        const edgeFade = smoothstep(0, WARP_EDGE_FADE_CELLS, edgeDistance);
+        const smoothedX = totalX / count;
+        const smoothedY = totalY / count;
+        nextNodes[nodeRow][nodeCol] = [
+          lerp(minX + nodeCol * cellW, smoothedX, 0.72 * edgeFade),
+          lerp(minY + nodeRow * cellH, smoothedY, 0.72 * edgeFade),
+        ];
+      }
+    }
+    for (let nodeRow = 0; nodeRow <= gridRows; nodeRow += 1) {
+      for (let nodeCol = 0; nodeCol <= gridCols; nodeCol += 1) {
+        warpNodes[nodeRow][nodeCol] = nextNodes[nodeRow][nodeCol];
+      }
+    }
   }
 
   function warpPoint(point) {
-    return [
-      interpolateWarp(point[0], minX, cellW, xEdges, gridCols),
-      interpolateWarp(point[1], minY, cellH, yEdges, gridRows),
-    ];
-  }
-
-  function inverseInterpolateWarp(value, start, cellSize, edges, count) {
-    if (value <= edges[0]) return start;
-    if (value >= edges[edges.length - 1]) return start + cellSize * count;
-    let low = 0;
-    let high = edges.length - 1;
-    while (low + 1 < high) {
-      const mid = Math.floor((low + high) / 2);
-      if (edges[mid] <= value) low = mid;
-      else high = mid;
-    }
-    const edgeSpan = edges[low + 1] - edges[low] || 1e-9;
-    const fraction = (value - edges[low]) / edgeSpan;
-    return start + (low + fraction) * cellSize;
+    const clampedX = clamp(point[0], minX, maxX);
+    const clampedY = clamp(point[1], minY, maxY);
+    const rawCol = clamp((clampedX - minX) / cellW, 0, gridCols - 1e-9);
+    const rawRow = clamp((clampedY - minY) / cellH, 0, gridRows - 1e-9);
+    const col = clamp(Math.floor(rawCol), 0, gridCols - 1);
+    const row = clamp(Math.floor(rawRow), 0, gridRows - 1);
+    const tx = rawCol - col;
+    const ty = rawRow - row;
+    return bilerpPoint(
+      warpNodes[row][col],
+      warpNodes[row][col + 1],
+      warpNodes[row + 1][col],
+      warpNodes[row + 1][col + 1],
+      tx,
+      ty,
+    );
   }
 
   function inverseWarpPoint(point) {
-    return [
-      inverseInterpolateWarp(point[0], minX, cellW, xEdges, gridCols),
-      inverseInterpolateWarp(point[1], minY, cellH, yEdges, gridRows),
-    ];
+    let guess = [point[0], point[1]];
+    for (let iteration = 0; iteration < 7; iteration += 1) {
+      const projected = warpPoint(guess);
+      guess = [
+        clamp(guess[0] + (point[0] - projected[0]), minX, maxX),
+        clamp(guess[1] + (point[1] - projected[1]), minY, maxY),
+      ];
+    }
+    return guess;
   }
 
-  const warpedCorners = [
-    warpPoint([minX, minY]),
-    warpPoint([minX, maxY]),
-    warpPoint([maxX, minY]),
-    warpPoint([maxX, maxY]),
-  ];
-  const xs = warpedCorners.map((point) => point[0]);
-  const ys = warpedCorners.map((point) => point[1]);
+  const allWarpedNodes = warpNodes.flat();
+  const xs = allWarpedNodes.map((point) => point[0]);
+  const ys = allWarpedNodes.map((point) => point[1]);
   const warpedBounds = [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
   const expansion = Array.from({ length: gridRows }, () => new Array(gridCols).fill(0));
   for (let row = 0; row < gridRows; row += 1) {
-    const scaleY = (yEdges[row + 1] - yEdges[row]) / cellH;
     for (let col = 0; col < gridCols; col += 1) {
       if (!validMask[row][col]) continue;
-      const scaleX = (xEdges[col + 1] - xEdges[col]) / cellW;
-      expansion[row][col] = scaleX * scaleY;
+      expansion[row][col] =
+        quadArea(
+          warpNodes[row][col],
+          warpNodes[row][col + 1],
+          warpNodes[row + 1][col + 1],
+          warpNodes[row + 1][col],
+        ) / (cellW * cellH);
     }
   }
 
@@ -422,8 +495,7 @@ function computeWarp(originPoint) {
     warpPoint,
     inverseWarpPoint,
     warpedBounds,
-    xEdges,
-    yEdges,
+    warpNodes,
     minutes: smoothedMinutes,
     expansion,
     areaWeights,
@@ -448,16 +520,30 @@ function drawHeatmap(drawCtx, warp, transform, useWarpGeometry = true) {
   for (let row = 0; row < gridRows; row += 1) {
     for (let col = 0; col < gridCols; col += 1) {
       if (!warp.validMask[row][col]) continue;
-      const x0 = useWarpGeometry ? warp.xEdges[col] : minX + col * cellW;
-      const x1 = useWarpGeometry ? warp.xEdges[col + 1] : x0 + cellW;
-      const y0 = useWarpGeometry ? warp.yEdges[row] : minY + row * cellH;
-      const y1 = useWarpGeometry ? warp.yEdges[row + 1] : y0 + cellH;
-      const left = transform.toScreen([x0, y0])[0];
-      const right = transform.toScreen([x1, y0])[0];
-      const top = transform.toScreen([x0, y1])[1];
-      const bottom = transform.toScreen([x0, y0])[1];
       rawCtx.fillStyle = heatmapColor(warp.minutes[row][col], 1);
-      rawCtx.fillRect(left, top, Math.max(1, right - left), Math.max(1, bottom - top));
+      if (useWarpGeometry) {
+        const p00 = transform.toScreen(warp.warpNodes[row][col]);
+        const p10 = transform.toScreen(warp.warpNodes[row][col + 1]);
+        const p11 = transform.toScreen(warp.warpNodes[row + 1][col + 1]);
+        const p01 = transform.toScreen(warp.warpNodes[row + 1][col]);
+        rawCtx.beginPath();
+        rawCtx.moveTo(p00[0], p00[1]);
+        rawCtx.lineTo(p10[0], p10[1]);
+        rawCtx.lineTo(p11[0], p11[1]);
+        rawCtx.lineTo(p01[0], p01[1]);
+        rawCtx.closePath();
+        rawCtx.fill();
+      } else {
+        const x0 = minX + col * cellW;
+        const y0 = minY + row * cellH;
+        const x1 = x0 + cellW;
+        const y1 = y0 + cellH;
+        const left = transform.toScreen([x0, y0])[0];
+        const right = transform.toScreen([x1, y0])[0];
+        const top = transform.toScreen([x0, y1])[1];
+        const bottom = transform.toScreen([x0, y0])[1];
+        rawCtx.fillRect(left, top, Math.max(1, right - left), Math.max(1, bottom - top));
+      }
     }
   }
 
