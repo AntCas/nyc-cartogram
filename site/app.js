@@ -22,6 +22,7 @@ const IMAGE_WARP_OVERDRAW_PX = 0.35;
 const WARP_LINE_CURVE_TOLERANCE_PX = 1.1;
 const WARP_LINE_MAX_SUBDIVISION_DEPTH = 7;
 const SWIM_METERS_PER_MINUTE = 28;
+const REACHABILITY_THRESHOLD_MINUTES = 60;
 
 const state = {
   data: null,
@@ -56,6 +57,8 @@ const searchButton = document.getElementById("searchButton");
 const shareButton = document.getElementById("shareButton");
 const searchMeta = document.getElementById("searchMeta");
 const searchResults = document.getElementById("searchResults");
+const reachScoreValue = document.getElementById("reachScoreValue");
+const reachScoreMeta = document.getElementById("reachScoreMeta");
 const ctx = mapCanvas.getContext("2d");
 const panelCard = document.querySelector(".panel-card");
 function clamp(value, min, max) {
@@ -733,6 +736,36 @@ function estimateTravel(origin, originDistances, destinationPoint) {
   };
 }
 
+function summarizeReachability(origin, originDistances) {
+  const totalStations = state.data.stations.length;
+  let reachableStations = 0;
+
+  for (const station of state.data.stations) {
+    const trip = estimateTravel(origin, originDistances, station.point);
+    if (trip.minutes <= REACHABILITY_THRESHOLD_MINUTES) {
+      reachableStations += 1;
+    }
+  }
+
+  return {
+    reachableStations,
+    totalStations,
+    ratio: totalStations ? reachableStations / totalStations : 0,
+  };
+}
+
+function syncReachabilityScore(summary = null) {
+  if (!summary) {
+    reachScoreValue.textContent = "-- / --";
+    reachScoreMeta.textContent = "Choose an origin to see how much of the subway you can reach in an hour.";
+    return;
+  }
+
+  const percent = Math.round(summary.ratio * 100);
+  reachScoreValue.textContent = `${summary.reachableStations} / ${summary.totalStations}`;
+  reachScoreMeta.textContent = `${percent}% of stations are reachable within ${REACHABILITY_THRESHOLD_MINUTES} minutes.`;
+}
+
 function computeWarp(origin) {
   const { distances, seeds } = runDijkstra(origin);
   const { gridCols, gridRows, bounds } = state.data.meta;
@@ -791,6 +824,8 @@ function computeWarp(origin) {
       anomalyGrid[row][col] = areaWeight - 1;
     }
   }
+
+  const reachability = summarizeReachability(origin, distances);
 
   const warpNodes = Array.from({ length: gridRows + 1 }, () => new Array(gridCols + 1).fill(null));
   const sigmaSq = WARP_SIGMA_CELLS * WARP_SIGMA_CELLS;
@@ -975,6 +1010,7 @@ function computeWarp(origin) {
   return {
     distances,
     seeds,
+    reachability,
     warpPoint,
     inverseWarpPoint,
     warpedBounds,
@@ -1076,16 +1112,18 @@ function drawMap(drawCtx, width, height) {
       warp: {
         inverseWarpPoint: (point) => point,
         distances: null,
+        reachability: null,
         seeds: [],
       },
       transform: state.transform,
       anchorOffset: [0, 0],
     };
+    syncReachabilityScore();
     return;
   }
 
   const normalizedOrigin = normalizeTravelPoint(state.originPoint);
-  const warp = state.showWarp || state.showHeatmap ? computeWarp(normalizedOrigin) : null;
+  const warp = computeWarp(normalizedOrigin);
   const baseTransform = state.transform;
   const warpPoint = state.showWarp && warp ? warp.warpPoint : (point) => point;
   const inverseWarpPoint = warp ? warp.inverseWarpPoint : (point) => point;
@@ -1121,12 +1159,14 @@ function drawMap(drawCtx, width, height) {
     warp: {
       inverseWarpPoint: state.showWarp ? inverseWarpPoint : (point) => point,
       distances: warp?.distances ?? null,
+      reachability: warp?.reachability ?? null,
       seeds: warp?.seeds ?? [],
       origin: normalizedOrigin,
     },
     transform,
     anchorOffset: [dx, dy],
   };
+  syncReachabilityScore(warp?.reachability ?? null);
 
   drawExternalLand(drawCtx, externalLandProjectPoint);
   drawCityBasemap(drawCtx, projectPoint, {

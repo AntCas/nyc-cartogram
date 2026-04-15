@@ -38,6 +38,10 @@ INTER_COMPLEX_WALK_PENALTY = 2.0
 DEFAULT_BOARD_WAIT = 4.0
 TRANSFER_PENALTY = 4.0
 INTER_COMPLEX_TRANSFER_PENALTY = 7.0
+STATEN_ISLAND_FERRY_ROUTE_ID = "SIF"
+STATEN_ISLAND_FERRY_WAIT = 7.5
+STATEN_ISLAND_FERRY_TRAVEL_MINUTES = 25.0
+STATEN_ISLAND_FERRY_TERMINALS = ("501", "635")
 
 Point = Tuple[float, float]
 Ring = List[Point]
@@ -596,6 +600,76 @@ def build_graph(
     )
 
 
+def add_staten_island_ferry(
+    stations: list,
+    station_index_by_id: Dict[str, int],
+    route_styles: Dict[str, dict],
+    route_shapes: list,
+    route_waits: Dict[str, float],
+    route_states: list,
+    station_states: List[List[int]],
+    adjacency: list,
+) -> None:
+    st_george_id, whitehall_id = STATEN_ISLAND_FERRY_TERMINALS
+    st_george_index = station_index_by_id.get(st_george_id)
+    whitehall_index = station_index_by_id.get(whitehall_id)
+    if st_george_index is None or whitehall_index is None:
+        return
+
+    route_styles[STATEN_ISLAND_FERRY_ROUTE_ID] = {
+        "color": "#4FB3BF",
+        "textColor": "#FFFFFF",
+        "label": "Ferry",
+    }
+    route_waits[STATEN_ISLAND_FERRY_ROUTE_ID] = STATEN_ISLAND_FERRY_WAIT
+
+    stations[st_george_index]["routes"].add(STATEN_ISLAND_FERRY_ROUTE_ID)
+    stations[whitehall_index]["routes"].add(STATEN_ISLAND_FERRY_ROUTE_ID)
+
+    start = stations[st_george_index]["point"]
+    end = stations[whitehall_index]["point"]
+    route_shapes.append(
+        {
+            "routeId": STATEN_ISLAND_FERRY_ROUTE_ID,
+            "color": route_styles[STATEN_ISLAND_FERRY_ROUTE_ID]["color"],
+            "textColor": route_styles[STATEN_ISLAND_FERRY_ROUTE_ID]["textColor"],
+            "label": route_styles[STATEN_ISLAND_FERRY_ROUTE_ID]["label"],
+            "points": round_path([start, end]),
+        }
+    )
+
+    st_george_state = len(route_states)
+    route_states.append({"stationIndex": st_george_index, "routeId": STATEN_ISLAND_FERRY_ROUTE_ID})
+    adjacency.append([])
+    station_states[st_george_index].append(st_george_state)
+
+    whitehall_state = len(route_states)
+    route_states.append({"stationIndex": whitehall_index, "routeId": STATEN_ISLAND_FERRY_ROUTE_ID})
+    adjacency.append([])
+    station_states[whitehall_index].append(whitehall_state)
+
+    def upsert_edge(from_state: int, to_state: int, weight: float) -> None:
+        for edge in adjacency[from_state]:
+            if edge[0] == to_state:
+                edge[1] = min(edge[1], weight)
+                return
+        adjacency[from_state].append([to_state, weight])
+
+    travel = round(STATEN_ISLAND_FERRY_TRAVEL_MINUTES, 2)
+    upsert_edge(st_george_state, whitehall_state, travel)
+    upsert_edge(whitehall_state, st_george_state, travel)
+
+    for station_index, ferry_state in ((st_george_index, st_george_state), (whitehall_index, whitehall_state)):
+        for other_state in station_states[station_index]:
+            if other_state == ferry_state:
+                continue
+            other_route = route_states[other_state]["routeId"]
+            to_other = round(TRANSFER_PENALTY + route_waits.get(other_route, DEFAULT_BOARD_WAIT), 2)
+            to_ferry = round(TRANSFER_PENALTY + route_waits.get(STATEN_ISLAND_FERRY_ROUTE_ID, DEFAULT_BOARD_WAIT), 2)
+            upsert_edge(ferry_state, other_state, to_other)
+            upsert_edge(other_state, ferry_state, to_ferry)
+
+
 def build_grid_cells(polygons: MultiPolygon, stations: list, bbox: Tuple[float, float, float, float]) -> Tuple[list, list]:
     min_x, min_y, max_x, max_y = bbox
     cell_w = (max_x - min_x) / GRID_COLS
@@ -650,6 +724,16 @@ def main() -> None:
     route_waits = build_route_waits(trips_by_id)
     route_states, station_states, adjacency = build_graph(
         stations, station_index_by_id, stop_to_complex, trips_by_id, route_waits
+    )
+    add_staten_island_ferry(
+        stations,
+        station_index_by_id,
+        route_styles,
+        route_shapes,
+        route_waits,
+        route_states,
+        station_states,
+        adjacency,
     )
     cells, mask = build_grid_cells(all_polygons, stations, bbox)
 
