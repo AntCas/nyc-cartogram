@@ -23,6 +23,7 @@ const WARP_LINE_CURVE_TOLERANCE_PX = 1.1;
 const WARP_LINE_MAX_SUBDIVISION_DEPTH = 7;
 const SWIM_METERS_PER_MINUTE = 28;
 const REACHABILITY_THRESHOLD_MINUTES = 60;
+const SHARE_COORDINATE_DECIMALS = 5;
 
 const state = {
   data: null,
@@ -55,6 +56,13 @@ const searchForm = document.getElementById("searchForm");
 const addressInput = document.getElementById("addressInput");
 const searchButton = document.getElementById("searchButton");
 const shareButton = document.getElementById("shareButton");
+const sharePanel = document.getElementById("sharePanel");
+const nativeShareAction = document.getElementById("nativeShareAction");
+const copyLinkAction = document.getElementById("copyLinkAction");
+const shareXAction = document.getElementById("shareXAction");
+const shareFacebookAction = document.getElementById("shareFacebookAction");
+const shareLinkedInAction = document.getElementById("shareLinkedInAction");
+const downloadImageAction = document.getElementById("downloadImageAction");
 const searchMeta = document.getElementById("searchMeta");
 const searchResults = document.getElementById("searchResults");
 const reachScoreCard = document.getElementById("reachScoreCard");
@@ -231,6 +239,82 @@ function formatShareTime(date = new Date()) {
     hour: "numeric",
     minute: "2-digit",
   });
+}
+
+function worldToLonLat(point) {
+  const metersPerDegLat = 111_320.0;
+  const metersPerDegLon = metersPerDegLat * Math.cos((state.data.meta.lat0 * Math.PI) / 180);
+  return {
+    lon: point[0] / metersPerDegLon,
+    lat: point[1] / metersPerDegLat,
+  };
+}
+
+function formatCoordinate(value) {
+  return Number(value).toFixed(SHARE_COORDINATE_DECIMALS);
+}
+
+function originPathForPoint(point) {
+  const { lat, lon } = worldToLonLat(point);
+  return `@${formatCoordinate(lat)},${formatCoordinate(lon)}`;
+}
+
+function originQueryForPoint(point) {
+  const { lat, lon } = worldToLonLat(point);
+  return `?origin=${formatCoordinate(lat)},${formatCoordinate(lon)}`;
+}
+
+function parseCoordinatePair(value) {
+  if (!value) return null;
+  const match = value.match(/^@?(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)$/);
+  if (!match) return null;
+  const lat = Number(match[1]);
+  const lon = Number(match[2]);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  return { lat, lon };
+}
+
+function parseOriginPath(pathname = window.location.pathname) {
+  const match = pathname.match(/\/@(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)\/?$/);
+  return match ? parseCoordinatePair(`${match[1]},${match[2]}`) : null;
+}
+
+function getBasePath() {
+  return window.__ASSET_BASE__ || "/";
+}
+
+function isLocalStaticDev() {
+  return (
+    ["localhost", "127.0.0.1"].includes(window.location.hostname) &&
+    getBasePath().startsWith("/site/")
+  );
+}
+
+function getCoordinateUrlFragment(point) {
+  return isLocalStaticDev() ? originQueryForPoint(point) : originPathForPoint(point);
+}
+
+function parseSharedOrigin() {
+  return (
+    parseOriginPath() ||
+    parseCoordinatePair(new URLSearchParams(window.location.search).get("origin")) ||
+    parseCoordinatePair(window.location.hash.replace(/^#/, ""))
+  );
+}
+
+function replaceBrowserUrl(pathOrQuery = "") {
+  const nextUrl = new URL(pathOrQuery, window.location.origin + getBasePath());
+  window.history.replaceState(null, "", nextUrl);
+}
+
+function getShareUrl() {
+  const point = state.pinnedPoint || state.originPoint;
+  const pathOrQuery = point ? getCoordinateUrlFragment(point) : "";
+  return new URL(pathOrQuery, window.location.origin + getBasePath()).toString();
+}
+
+function getShareText() {
+  return "Explore New York City by subway commute time with this interactive transit cartogram.";
 }
 
 function escapeHtml(value) {
@@ -1446,6 +1530,34 @@ async function downloadShareImage() {
   }
 }
 
+function closeSharePanel() {
+  sharePanel.hidden = true;
+  shareButton.setAttribute("aria-expanded", "false");
+}
+
+function openSharePanel() {
+  const shareUrl = getShareUrl();
+  const shareTitle = document.title;
+  const shareText = getShareText();
+  const encodedUrl = encodeURIComponent(shareUrl);
+  const encodedText = encodeURIComponent(`${shareTitle} — ${shareText}`);
+
+  shareXAction.href = `https://x.com/intent/post?url=${encodedUrl}&text=${encodedText}`;
+  shareFacebookAction.href = `https://www.facebook.com/sharer/sharer.php?u=${encodedUrl}`;
+  shareLinkedInAction.href = `https://www.linkedin.com/sharing/share-offsite/?url=${encodedUrl}`;
+  nativeShareAction.hidden = !navigator.share;
+  sharePanel.hidden = false;
+  shareButton.setAttribute("aria-expanded", "true");
+}
+
+function toggleSharePanel() {
+  if (sharePanel.hidden) {
+    openSharePanel();
+    return;
+  }
+  closeSharePanel();
+}
+
 function requestDraw() {
   if (!state.ready || !state.dirty) return;
   state.dirty = false;
@@ -1507,6 +1619,7 @@ function setPinnedOrigin(worldPoint) {
   state.pinnedScreen = null;
   state.pinned = true;
   state.cursorPoint = worldPoint;
+  replaceBrowserUrl(getCoordinateUrlFragment(worldPoint));
   state.dirty = true;
   requestDraw();
 }
@@ -1592,6 +1705,17 @@ async function init() {
   state.cursorPoint = null;
   state.originPoint = null;
 
+  const sharedOrigin = parseSharedOrigin();
+  if (sharedOrigin) {
+    const restoredPoint = lonLatToWorld(sharedOrigin.lon, sharedOrigin.lat);
+    if (withinBounds(restoredPoint)) {
+      state.originPoint = restoredPoint;
+      state.pinnedPoint = restoredPoint;
+      state.cursorPoint = restoredPoint;
+      state.pinned = true;
+    }
+  }
+
   resize();
   window.addEventListener("resize", resize);
 
@@ -1609,6 +1733,7 @@ async function init() {
   });
 
   mapCanvas.addEventListener("click", (event) => {
+    closeSharePanel();
     const hovered = state.cursorScreen && state.cursorPoint;
     const { screenPoint, worldPoint } = hovered
       ? { screenPoint: state.cursorScreen.slice(), worldPoint: state.cursorPoint.slice() }
@@ -1623,18 +1748,21 @@ async function init() {
       state.pinnedPoint = worldPoint;
       state.pinnedScreen = screenPoint;
       state.pinned = true;
+      replaceBrowserUrl(getCoordinateUrlFragment(worldPoint));
     } else {
       state.pinned = false;
       state.pinnedPoint = null;
       state.pinnedScreen = null;
       state.originPoint = worldPoint;
       state.originLabel = null;
+      replaceBrowserUrl();
     }
     state.dirty = true;
     requestDraw();
   });
 
   mapCanvas.addEventListener("pointerleave", () => {
+    closeSharePanel();
     state.cursorScreen = null;
     if (!state.pinned) {
       state.cursorPoint = null;
@@ -1646,6 +1774,7 @@ async function init() {
   });
 
   heatmapToggle.addEventListener("change", () => {
+    closeSharePanel();
     state.showHeatmap = heatmapToggle.checked;
     syncHeatmapLegend();
     state.dirty = true;
@@ -1653,12 +1782,14 @@ async function init() {
   });
 
   warpToggle.addEventListener("change", () => {
+    closeSharePanel();
     state.showWarp = warpToggle.checked;
     state.dirty = true;
     requestDraw();
   });
 
   fullscreenButton.addEventListener("click", async () => {
+    closeSharePanel();
     try {
       if (document.fullscreenElement === panelCard) {
         await document.exitFullscreen();
@@ -1678,11 +1809,63 @@ async function init() {
     resize();
   });
 
-  shareButton.addEventListener("click", () => {
+  shareButton.addEventListener("click", (event) => {
+    event.stopPropagation();
+    toggleSharePanel();
+  });
+
+  nativeShareAction.addEventListener("click", async () => {
+    try {
+      await navigator.share({
+        title: document.title,
+        text: getShareText(),
+        url: getShareUrl(),
+      });
+      closeSharePanel();
+    } catch (error) {
+      if (error?.name !== "AbortError") {
+        console.error(error);
+        searchMeta.textContent = "Could not open the share sheet. Try another option.";
+      }
+    }
+  });
+
+  copyLinkAction.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(getShareUrl());
+      searchMeta.textContent = "Link copied.";
+      closeSharePanel();
+    } catch (error) {
+      console.error(error);
+      searchMeta.textContent = "Could not copy the link. Try again.";
+    }
+  });
+
+  downloadImageAction.addEventListener("click", () => {
+    closeSharePanel();
     downloadShareImage().catch((error) => {
       console.error(error);
+      searchMeta.textContent = "Could not save the image. Try again.";
       shareButton.disabled = false;
     });
+  });
+
+  for (const link of [shareXAction, shareFacebookAction, shareLinkedInAction]) {
+    link.addEventListener("click", () => {
+      closeSharePanel();
+    });
+  }
+
+  document.addEventListener("click", (event) => {
+    if (sharePanel.hidden) return;
+    if (sharePanel.contains(event.target) || shareButton.contains(event.target)) return;
+    closeSharePanel();
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !sharePanel.hidden) {
+      closeSharePanel();
+    }
   });
 
   searchForm.addEventListener("submit", async (event) => {

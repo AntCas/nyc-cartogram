@@ -63,7 +63,7 @@ Deploy notes:
 - Static assets are bundled from `site/`, so requests like `/nyc/styles.css`, `/nyc/app.js`, `/nyc/favicon.svg`, and `/nyc/data/commute_map_data.json` are all handled by the Worker deployment.
 - Disable any older Cloudflare URL Rewrite Rules or Cloud Connector routes for this app path. They can conflict with the Worker and cause 404s.
 - If this is your first local `pnpm` install and Wrangler dependencies were blocked, run `pnpm approve-builds` and approve the relevant packages before deploying again.
-- For local development, open `http://localhost:8000/site/`. For production, use `https://castrio.me/nyc/`.
+- For local development, open `http://localhost:8000/site/`. Pretty origin routes like `/nyc/@40.71267,-73.92366` work in production and under `wrangler dev`; plain static localhost falls back to `?origin=40.71267,-73.92366`.
 
 Notes:
 - The map now uses a single shared geographic projection for boroughs, stations, route shapes, parks, and streets so transit layers stay aligned to the basemap.

@@ -413,6 +413,50 @@ canvas {
   position: static;
 }
 
+.share-panel {
+  position: absolute;
+  top: 48px;
+  right: 0;
+  z-index: 3;
+  min-width: 208px;
+  padding: 8px;
+  border-radius: 18px;
+  border: 1px solid rgba(23, 48, 77, 0.12);
+  background: rgba(255, 252, 247, 0.96);
+  backdrop-filter: blur(14px);
+  box-shadow: 0 22px 45px rgba(23, 48, 77, 0.16);
+}
+
+.share-panel[hidden] {
+  display: none;
+}
+
+.share-panel-item {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: flex-start;
+  min-height: 40px;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.92rem;
+  text-decoration: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.share-panel-item:hover {
+  background: rgba(215, 92, 46, 0.1);
+}
+
+.share-panel-item[hidden] {
+  display: none;
+}
+
 .map-score-card {
   position: absolute;
   top: 18px;
@@ -618,5 +662,9 @@ canvas {
     left: 14px;
     width: min(260px, calc(100% - 84px));
     padding: 12px 14px 13px;
+  }
+
+  .share-panel {
+    top: 46px;
   }
 }

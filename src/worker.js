@@ -23,7 +23,7 @@ export default {
       return new Response("Not found", { status: 404 });
     }
 
-    url.pathname = rewrittenPath;
+    url.pathname = rewrittenPath === "/" || rewrittenPath.startsWith("/@") ? "/index.html" : rewrittenPath;
     const assetRequest = new Request(url.toString(), request);
     return env.ASSETS.fetch(assetRequest);
   },
