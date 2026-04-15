@@ -211,7 +211,7 @@ function formatMinutes(minutes) {
 function formatTravelBreakdown(baseMinutes, swimMinutes) {
   if (!Number.isFinite(baseMinutes)) return "unreachable";
   if (swimMinutes < 0.5) return formatMinutes(baseMinutes);
-  return `${Math.round(baseMinutes)}m 🚇 + ${Math.round(swimMinutes)}m 🏊`;
+  return `${Math.round(baseMinutes)} min + ${Math.round(swimMinutes)} min swim 🌊`;
 }
 
 function formatShareTime(date = new Date()) {
@@ -354,6 +354,7 @@ function drawExternalLand(drawCtx, projectPoint) {
   const polygons = state.data.externalLand || [];
   if (!polygons.length) return;
   drawCtx.save();
+  drawCtx.globalAlpha = 0.3;
   drawCtx.fillStyle = "#f3f6fa";
   drawCtx.strokeStyle = "rgba(79, 105, 135, 0.42)";
   drawCtx.lineWidth = 0.75;
