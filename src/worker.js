@@ -1,4 +1,4 @@
-const PATH_PREFIX = "/nyc-transit-time-map";
+const PATH_PREFIX = "/nyc-cartogram";
 
 function withoutPrefix(pathname) {
   if (pathname === PATH_PREFIX) return "/";
@@ -11,6 +11,12 @@ function withoutPrefix(pathname) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+
+    if (url.pathname === PATH_PREFIX) {
+      url.pathname = `${PATH_PREFIX}/`;
+      return Response.redirect(url.toString(), 308);
+    }
+
     const rewrittenPath = withoutPrefix(url.pathname);
 
     if (rewrittenPath === null) {

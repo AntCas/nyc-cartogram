@@ -8,16 +8,25 @@
       (function () {
         const path = window.location.pathname;
         const isSubpathDeploy = path === "/nyc-cartogram" || path.startsWith("/nyc-cartogram/");
-        const baseHref = isSubpathDeploy
+        const assetBase = isSubpathDeploy
           ? "/nyc-cartogram/"
           : path.endsWith("/")
             ? path
             : path.slice(0, path.lastIndexOf("/") + 1);
-        document.write(`<base href="${baseHref}">`);
+        window.__ASSET_BASE__ = assetBase;
+
+        const favicon = document.createElement("link");
+        favicon.rel = "icon";
+        favicon.type = "image/svg+xml";
+        favicon.href = `${assetBase}favicon.svg`;
+        document.head.appendChild(favicon);
+
+        const stylesheet = document.createElement("link");
+        stylesheet.rel = "stylesheet";
+        stylesheet.href = `${assetBase}styles.css`;
+        document.head.appendChild(stylesheet);
       })();
     </script>
-    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
-    <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
     <div class="page-shell">
@@ -110,6 +119,8 @@
       </footer>
     </div>
 
-    <script type="module" src="./app.js"></script>
+    <script type="module">
+      import(window.__ASSET_BASE__ + "app.js");
+    </script>
   </body>
 </html>
