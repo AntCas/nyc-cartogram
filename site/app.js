@@ -13,10 +13,14 @@ const HEATMAP_BLUR_PX = 7;
 const HEATMAP_ALPHA = 0.8;
 const WARP_INFLUENCE_RADIUS = 8;
 const WARP_SIGMA_CELLS = 3.4;
-const WARP_DISPLACEMENT_SCALE = 2.34;
+const WARP_DISPLACEMENT_SCALE = 1.0;
 const WARP_MAX_SHIFT_CELLS = 6.6;
-const WARP_NODE_SMOOTHING_PASSES = 2;
+const WARP_NODE_SMOOTHING_PASSES = 3;
 const WARP_EDGE_FADE_CELLS = 10;
+const IMAGE_WARP_BLOCK_CELLS = 4;
+const IMAGE_WARP_OVERDRAW_PX = 0.35;
+const WARP_LINE_CURVE_TOLERANCE_PX = 1.1;
+const WARP_LINE_MAX_SUBDIVISION_DEPTH = 7;
 const SWIM_METERS_PER_MINUTE = 28;
 
 const state = {
@@ -34,6 +38,7 @@ const state = {
   pinned: false,
   transform: null,
   currentRender: null,
+  baseMapCache: null,
   dirty: true,
 };
 
@@ -307,6 +312,79 @@ function createCanvasBacking(canvas) {
   return { width: rect.width, height: rect.height };
 }
 
+function createCanvasSurface(width, height) {
+  const dpr = window.devicePixelRatio || 1;
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(width * dpr));
+  canvas.height = Math.max(1, Math.round(height * dpr));
+  const context = canvas.getContext("2d");
+  context.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { canvas, context, width, height };
+}
+
+function expandTriangle(points, amount) {
+  if (!amount) return points.map((point) => point.slice());
+  const centroid = [
+    (points[0][0] + points[1][0] + points[2][0]) / 3,
+    (points[0][1] + points[1][1] + points[2][1]) / 3,
+  ];
+  return points.map((point) => {
+    const dx = point[0] - centroid[0];
+    const dy = point[1] - centroid[1];
+    const length = Math.hypot(dx, dy) || 1;
+    return [point[0] + (dx / length) * amount, point[1] + (dy / length) * amount];
+  });
+}
+
+function trianglePath(drawCtx, a, b, c) {
+  drawCtx.beginPath();
+  drawCtx.moveTo(a[0], a[1]);
+  drawCtx.lineTo(b[0], b[1]);
+  drawCtx.lineTo(c[0], c[1]);
+  drawCtx.closePath();
+}
+
+function affineTransformBetweenTriangles(srcA, srcB, srcC, dstA, dstB, dstC) {
+  const srcUx = srcB[0] - srcA[0];
+  const srcUy = srcB[1] - srcA[1];
+  const srcVx = srcC[0] - srcA[0];
+  const srcVy = srcC[1] - srcA[1];
+  const determinant = srcUx * srcVy - srcVx * srcUy;
+  if (Math.abs(determinant) < 1e-9) return null;
+
+  const inv00 = srcVy / determinant;
+  const inv01 = -srcVx / determinant;
+  const inv10 = -srcUy / determinant;
+  const inv11 = srcUx / determinant;
+
+  const dstUx = dstB[0] - dstA[0];
+  const dstUy = dstB[1] - dstA[1];
+  const dstVx = dstC[0] - dstA[0];
+  const dstVy = dstC[1] - dstA[1];
+
+  const a = dstUx * inv00 + dstVx * inv10;
+  const c = dstUx * inv01 + dstVx * inv11;
+  const b = dstUy * inv00 + dstVy * inv10;
+  const d = dstUy * inv01 + dstVy * inv11;
+  const e = dstA[0] - a * srcA[0] - c * srcA[1];
+  const f = dstA[1] - b * srcA[0] - d * srcA[1];
+
+  return [a, b, c, d, e, f];
+}
+
+function drawWarpedTriangle(drawCtx, sourceCanvas, sourceWidth, sourceHeight, srcA, srcB, srcC, dstA, dstB, dstC) {
+  const matrix = affineTransformBetweenTriangles(srcA, srcB, srcC, dstA, dstB, dstC);
+  if (!matrix) return;
+  const [a, b, c, d, e, f] = matrix;
+  const [clipA, clipB, clipC] = expandTriangle([dstA, dstB, dstC], IMAGE_WARP_OVERDRAW_PX);
+  drawCtx.save();
+  trianglePath(drawCtx, clipA, clipB, clipC);
+  drawCtx.clip();
+  drawCtx.transform(a, b, c, d, e, f);
+  drawCtx.drawImage(sourceCanvas, 0, 0, sourceWidth, sourceHeight);
+  drawCtx.restore();
+}
+
 function drawPanelBackground(drawCtx, width, height) {
   drawCtx.clearRect(0, 0, width, height);
   const bg = drawCtx.createLinearGradient(0, 0, 0, height);
@@ -341,6 +419,11 @@ function drawPolygonPath(drawCtx, polygon, projectPoint) {
   tracePolygonPath(drawCtx, polygon, projectPoint);
 }
 
+function landMaskPolygons() {
+  if (state.data.landMask?.length) return state.data.landMask;
+  return state.data.boroughs.flatMap((borough) => borough.polygons);
+}
+
 function traceBoroughMaskPath(drawCtx, projectPoint) {
   drawCtx.beginPath();
   for (const borough of state.data.boroughs) {
@@ -348,6 +431,19 @@ function traceBoroughMaskPath(drawCtx, projectPoint) {
       tracePolygonPath(drawCtx, polygon, projectPoint);
     }
   }
+}
+
+function traceLandMaskPath(drawCtx, projectPoint) {
+  drawCtx.beginPath();
+  for (const polygon of landMaskPolygons()) {
+    tracePolygonPath(drawCtx, polygon, projectPoint);
+  }
+}
+
+function fillLandMask(drawCtx, projectPoint) {
+  traceLandMaskPath(drawCtx, projectPoint);
+  drawCtx.fillStyle = "#f3f6fa";
+  drawCtx.fill("evenodd");
 }
 
 function drawExternalLand(drawCtx, projectPoint) {
@@ -367,20 +463,201 @@ function drawExternalLand(drawCtx, projectPoint) {
   drawCtx.restore();
 }
 
-function drawPolyline(drawCtx, points, projectPoint) {
+function midpoint(a, b) {
+  return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+}
+
+function distanceToChord(point, start, end) {
+  const dx = end[0] - start[0];
+  const dy = end[1] - start[1];
+  const length = Math.hypot(dx, dy);
+  if (length < 1e-6) return distance(point, start);
+  return Math.abs(dx * (start[1] - point[1]) - (start[0] - point[0]) * dy) / length;
+}
+
+function traceAdaptiveSegment(drawCtx, start, end, startScreen, endScreen, projectPoint, tolerance, depth) {
+  if (depth <= 0) {
+    drawCtx.lineTo(endScreen[0], endScreen[1]);
+    return;
+  }
+  const worldMid = midpoint(start, end);
+  const screenMid = projectPoint(worldMid);
+  const deviation = distanceToChord(screenMid, startScreen, endScreen);
+  if (deviation <= tolerance) {
+    drawCtx.lineTo(endScreen[0], endScreen[1]);
+    return;
+  }
+  traceAdaptiveSegment(drawCtx, start, worldMid, startScreen, screenMid, projectPoint, tolerance, depth - 1);
+  traceAdaptiveSegment(drawCtx, worldMid, end, screenMid, endScreen, projectPoint, tolerance, depth - 1);
+}
+
+function drawPolyline(drawCtx, points, projectPoint, { tolerance = 0, maxDepth = 0 } = {}) {
+  if (!points.length) return;
   drawCtx.beginPath();
-  points.forEach((point, index) => {
-    const [sx, sy] = projectPoint(point);
-    if (index === 0) drawCtx.moveTo(sx, sy);
-    else drawCtx.lineTo(sx, sy);
-  });
+  let previousPoint = points[0];
+  let previousScreen = projectPoint(previousPoint);
+  drawCtx.moveTo(previousScreen[0], previousScreen[1]);
+  for (let index = 1; index < points.length; index += 1) {
+    const nextPoint = points[index];
+    const nextScreen = projectPoint(nextPoint);
+    if (tolerance > 0 && maxDepth > 0) {
+      traceAdaptiveSegment(
+        drawCtx,
+        previousPoint,
+        nextPoint,
+        previousScreen,
+        nextScreen,
+        projectPoint,
+        tolerance,
+        maxDepth,
+      );
+    } else {
+      drawCtx.lineTo(nextScreen[0], nextScreen[1]);
+    }
+    previousPoint = nextPoint;
+    previousScreen = nextScreen;
+  }
   drawCtx.stroke();
+}
+
+function drawCityBasemap(
+  drawCtx,
+  projectPoint,
+  {
+    includeBoroughBorders = true,
+    streetCurveTolerance = 0,
+    routeCurveTolerance = 0,
+    curveMaxDepth = 0,
+  } = {},
+) {
+  fillLandMask(drawCtx, projectPoint);
+
+  for (const polygon of state.data.parks) {
+    drawPolygonPath(drawCtx, polygon, projectPoint);
+    drawCtx.fillStyle = "#dbeacd";
+    drawCtx.strokeStyle = "#a7c39b";
+    drawCtx.lineWidth = 0.45;
+    drawCtx.fill();
+    drawCtx.stroke();
+  }
+
+  for (const street of state.data.streets) {
+    drawCtx.strokeStyle = "rgba(193, 202, 212, 0.92)";
+    drawCtx.lineWidth = streetWidth(street.kind);
+    drawCtx.lineCap = "round";
+    drawCtx.lineJoin = "round";
+    drawPolyline(drawCtx, street.points, projectPoint, {
+      tolerance: streetCurveTolerance,
+      maxDepth: curveMaxDepth,
+    });
+  }
+
+  for (const route of state.data.routes) {
+    drawCtx.strokeStyle = route.color;
+    drawCtx.lineWidth = ROUTE_LINE_WIDTH;
+    drawCtx.lineCap = "round";
+    drawCtx.lineJoin = "round";
+    drawPolyline(drawCtx, route.points, projectPoint, {
+      tolerance: routeCurveTolerance,
+      maxDepth: curveMaxDepth,
+    });
+  }
+
+  if (includeBoroughBorders) {
+    for (const borough of state.data.boroughs) {
+      for (const polygon of borough.polygons) {
+        drawPolygonPath(drawCtx, polygon, projectPoint);
+        drawCtx.strokeStyle = "#4f6987";
+        drawCtx.lineWidth = 1.05;
+        drawCtx.stroke();
+      }
+    }
+  }
+}
+
+function drawStations(drawCtx, projectPoint) {
+  for (const station of state.data.stations) {
+    const [sx, sy] = projectPoint(station.point);
+    drawCtx.beginPath();
+    drawCtx.arc(sx, sy, 1.35, 0, Math.PI * 2);
+    drawCtx.fillStyle = "#ffffff";
+    drawCtx.fill();
+    drawCtx.lineWidth = 0.55;
+    drawCtx.strokeStyle = "#5a6e84";
+    drawCtx.stroke();
+  }
+}
+
+function drawBoroughLabels(drawCtx, projectPoint) {
+  drawCtx.font = '700 15px "Avenir Next", "Helvetica Neue", Helvetica, sans-serif';
+  drawCtx.textAlign = "center";
+  drawCtx.textBaseline = "middle";
+  drawCtx.fillStyle = "#17304d";
+  drawCtx.strokeStyle = "rgba(255,252,247,0.95)";
+  drawCtx.lineWidth = 6;
+  drawCtx.lineJoin = "round";
+  for (const borough of state.data.boroughs) {
+    const [lx, ly] = projectPoint(borough.label);
+    drawCtx.strokeText(borough.name, lx, ly);
+    drawCtx.fillText(borough.name, lx, ly);
+  }
 }
 
 function streetWidth(kind) {
   if (kind === "motorway") return 1.8;
   if (kind === "trunk") return 1.5;
   return 1.1;
+}
+
+function buildBaseMapCache(width, height, sourceTransform) {
+  const surface = createCanvasSurface(width, height);
+  surface.context.clearRect(0, 0, width, height);
+  drawCityBasemap(surface.context, (point) => sourceTransform.toScreen(point), { includeBoroughBorders: false });
+  return surface;
+}
+
+function getBaseMapCache(width, height, sourceTransform) {
+  const cache = state.baseMapCache;
+  if (cache && cache.width === width && cache.height === height) {
+    return cache;
+  }
+  const nextCache = buildBaseMapCache(width, height, sourceTransform);
+  state.baseMapCache = nextCache;
+  return nextCache;
+}
+
+function drawWarpedBaseMap(drawCtx, width, height, warp, sourceTransform, destinationTransform) {
+  const surface = getBaseMapCache(width, height, sourceTransform);
+  const { gridCols, gridRows, bounds } = state.data.meta;
+  const [minX, minY, maxX, maxY] = bounds;
+  const cellW = (maxX - minX) / gridCols;
+  const cellH = (maxY - minY) / gridRows;
+
+  drawCtx.save();
+  drawCtx.imageSmoothingEnabled = true;
+  for (let row = 0; row < gridRows; row += IMAGE_WARP_BLOCK_CELLS) {
+    const rowEnd = Math.min(gridRows, row + IMAGE_WARP_BLOCK_CELLS);
+    for (let col = 0; col < gridCols; col += IMAGE_WARP_BLOCK_CELLS) {
+      const colEnd = Math.min(gridCols, col + IMAGE_WARP_BLOCK_CELLS);
+      const worldP00 = [minX + col * cellW, minY + row * cellH];
+      const worldP10 = [minX + colEnd * cellW, minY + row * cellH];
+      const worldP11 = [minX + colEnd * cellW, minY + rowEnd * cellH];
+      const worldP01 = [minX + col * cellW, minY + rowEnd * cellH];
+
+      const srcP00 = sourceTransform.toScreen(worldP00);
+      const srcP10 = sourceTransform.toScreen(worldP10);
+      const srcP11 = sourceTransform.toScreen(worldP11);
+      const srcP01 = sourceTransform.toScreen(worldP01);
+      const dstP00 = destinationTransform.toScreen(warp.warpNodes[row][col]);
+      const dstP10 = destinationTransform.toScreen(warp.warpNodes[row][colEnd]);
+      const dstP11 = destinationTransform.toScreen(warp.warpNodes[rowEnd][colEnd]);
+      const dstP01 = destinationTransform.toScreen(warp.warpNodes[rowEnd][col]);
+
+      drawWarpedTriangle(drawCtx, surface.canvas, width, height, srcP00, srcP10, srcP11, dstP00, dstP10, dstP11);
+      drawWarpedTriangle(drawCtx, surface.canvas, width, height, srcP00, srcP11, srcP01, dstP00, dstP11, dstP01);
+    }
+  }
+  drawCtx.restore();
 }
 
 function nearestStations(point, count) {
@@ -770,8 +1047,8 @@ function drawHeatmap(drawCtx, warp, transform, useWarpGeometry = true) {
   maskedCtx.setTransform(scale, 0, 0, scale, 0, 0);
   maskedCtx.imageSmoothingEnabled = true;
   maskedCtx.save();
-  traceBoroughMaskPath(maskedCtx, (point) => transform.toScreen(useWarpGeometry ? warp.warpPoint(point) : point));
-  maskedCtx.clip();
+  traceLandMaskPath(maskedCtx, (point) => transform.toScreen(useWarpGeometry ? warp.warpPoint(point) : point));
+  maskedCtx.clip("evenodd");
   maskedCtx.drawImage(blurredCanvas, 0, 0, width, height);
   maskedCtx.restore();
 
@@ -790,71 +1067,9 @@ function drawMap(drawCtx, width, height) {
   if (!state.originPoint) {
     const projectPoint = (point) => state.transform.toScreen(point);
     drawExternalLand(drawCtx, projectPoint);
-    for (const borough of state.data.boroughs) {
-      for (const polygon of borough.polygons) {
-        drawPolygonPath(drawCtx, polygon, projectPoint);
-        drawCtx.fillStyle = "#f3f6fa";
-        drawCtx.fill();
-      }
-    }
-
-    for (const polygon of state.data.parks) {
-      drawPolygonPath(drawCtx, polygon, projectPoint);
-      drawCtx.fillStyle = "#dbeacd";
-      drawCtx.strokeStyle = "#a7c39b";
-      drawCtx.lineWidth = 0.45;
-      drawCtx.fill();
-      drawCtx.stroke();
-    }
-
-    for (const street of state.data.streets) {
-      drawCtx.strokeStyle = "rgba(193, 202, 212, 0.92)";
-      drawCtx.lineWidth = streetWidth(street.kind);
-      drawCtx.lineCap = "round";
-      drawCtx.lineJoin = "round";
-      drawPolyline(drawCtx, street.points, projectPoint);
-    }
-
-    for (const route of state.data.routes) {
-      drawCtx.strokeStyle = route.color;
-      drawCtx.lineWidth = ROUTE_LINE_WIDTH;
-      drawCtx.lineCap = "round";
-      drawCtx.lineJoin = "round";
-      drawPolyline(drawCtx, route.points, projectPoint);
-    }
-
-    for (const borough of state.data.boroughs) {
-      for (const polygon of borough.polygons) {
-        drawPolygonPath(drawCtx, polygon, projectPoint);
-        drawCtx.strokeStyle = "#4f6987";
-        drawCtx.lineWidth = 1.05;
-        drawCtx.stroke();
-      }
-    }
-
-    for (const station of state.data.stations) {
-      const [sx, sy] = projectPoint(station.point);
-      drawCtx.beginPath();
-      drawCtx.arc(sx, sy, 1.35, 0, Math.PI * 2);
-      drawCtx.fillStyle = "#ffffff";
-      drawCtx.fill();
-      drawCtx.lineWidth = 0.55;
-      drawCtx.strokeStyle = "#5a6e84";
-      drawCtx.stroke();
-    }
-
-    drawCtx.font = '700 15px "Avenir Next", "Helvetica Neue", Helvetica, sans-serif';
-    drawCtx.textAlign = "center";
-    drawCtx.textBaseline = "middle";
-    drawCtx.fillStyle = "#17304d";
-    drawCtx.strokeStyle = "rgba(255,252,247,0.95)";
-    drawCtx.lineWidth = 6;
-    drawCtx.lineJoin = "round";
-    for (const borough of state.data.boroughs) {
-      const [lx, ly] = projectPoint(borough.label);
-      drawCtx.strokeText(borough.name, lx, ly);
-      drawCtx.fillText(borough.name, lx, ly);
-    }
+    drawCityBasemap(drawCtx, projectPoint);
+    drawStations(drawCtx, projectPoint);
+    drawBoroughLabels(drawCtx, projectPoint);
 
     statusText.textContent = "Hover to preview an origin, then click to pin it.";
     state.currentRender = {
@@ -895,6 +1110,13 @@ function drawMap(drawCtx, width, height) {
   const transform = offsetTransform(baseTransform, dx, dy);
   const projectPoint = (point) => transform.toScreen(warpPoint(point));
   const externalLandProjectPoint = (point) => transform.toScreen(point);
+  const lineCurveOptions = state.showWarp
+    ? {
+        streetCurveTolerance: WARP_LINE_CURVE_TOLERANCE_PX,
+        routeCurveTolerance: WARP_LINE_CURVE_TOLERANCE_PX,
+        curveMaxDepth: WARP_LINE_MAX_SUBDIVISION_DEPTH,
+      }
+    : {};
   state.currentRender = {
     warp: {
       inverseWarpPoint: state.showWarp ? inverseWarpPoint : (point) => point,
@@ -907,76 +1129,18 @@ function drawMap(drawCtx, width, height) {
   };
 
   drawExternalLand(drawCtx, externalLandProjectPoint);
-  for (const borough of state.data.boroughs) {
-    for (const polygon of borough.polygons) {
-      drawPolygonPath(drawCtx, polygon, projectPoint);
-      drawCtx.fillStyle = "#f3f6fa";
-      drawCtx.fill();
-    }
-  }
-
-  for (const polygon of state.data.parks) {
-    drawPolygonPath(drawCtx, polygon, projectPoint);
-    drawCtx.fillStyle = "#dbeacd";
-    drawCtx.strokeStyle = "#a7c39b";
-    drawCtx.lineWidth = 0.45;
-    drawCtx.fill();
-    drawCtx.stroke();
-  }
-
-  for (const street of state.data.streets) {
-    drawCtx.strokeStyle = "rgba(193, 202, 212, 0.92)";
-    drawCtx.lineWidth = streetWidth(street.kind);
-    drawCtx.lineCap = "round";
-    drawCtx.lineJoin = "round";
-    drawPolyline(drawCtx, street.points, projectPoint);
-  }
-
-  for (const route of state.data.routes) {
-    drawCtx.strokeStyle = route.color;
-    drawCtx.lineWidth = ROUTE_LINE_WIDTH;
-    drawCtx.lineCap = "round";
-    drawCtx.lineJoin = "round";
-    drawPolyline(drawCtx, route.points, projectPoint);
-  }
-
-  for (const borough of state.data.boroughs) {
-    for (const polygon of borough.polygons) {
-      drawPolygonPath(drawCtx, polygon, projectPoint);
-      drawCtx.strokeStyle = "#4f6987";
-      drawCtx.lineWidth = 1.05;
-      drawCtx.stroke();
-    }
-  }
+  drawCityBasemap(drawCtx, projectPoint, {
+    includeBoroughBorders: !state.showWarp,
+    ...lineCurveOptions,
+  });
 
   if (state.showHeatmap && warp) {
     const heatmapTransform = state.showWarp ? transform : baseTransform;
     drawHeatmap(drawCtx, warp, heatmapTransform, state.showWarp);
   }
 
-  for (const station of state.data.stations) {
-    const [sx, sy] = projectPoint(station.point);
-    drawCtx.beginPath();
-    drawCtx.arc(sx, sy, 1.35, 0, Math.PI * 2);
-    drawCtx.fillStyle = "#ffffff";
-    drawCtx.fill();
-    drawCtx.lineWidth = 0.55;
-    drawCtx.strokeStyle = "#5a6e84";
-    drawCtx.stroke();
-  }
-
-  drawCtx.font = '700 15px "Avenir Next", "Helvetica Neue", Helvetica, sans-serif';
-  drawCtx.textAlign = "center";
-  drawCtx.textBaseline = "middle";
-  drawCtx.fillStyle = "#17304d";
-  drawCtx.strokeStyle = "rgba(255,252,247,0.95)";
-  drawCtx.lineWidth = 6;
-  drawCtx.lineJoin = "round";
-  for (const borough of state.data.boroughs) {
-    const [lx, ly] = projectPoint(borough.label);
-    drawCtx.strokeText(borough.name, lx, ly);
-    drawCtx.fillText(borough.name, lx, ly);
-  }
+  drawStations(drawCtx, projectPoint);
+  drawBoroughLabels(drawCtx, projectPoint);
 
   if (state.pinned) {
     drawMarker(drawCtx, projectPoint(state.originPoint), "#d75c2e", 24, 5.5);
@@ -1217,6 +1381,7 @@ function requestDraw() {
 function resize() {
   const size = createCanvasBacking(mapCanvas);
   state.transform = buildTransform(state.data.meta.bounds, size.width, size.height);
+  state.baseMapCache = null;
   state.dirty = true;
   requestDraw();
 }
@@ -1340,6 +1505,7 @@ async function searchAddress(query) {
 async function init() {
   const response = await fetch(DATA_URL);
   state.data = await response.json();
+  state.baseMapCache = null;
   state.ready = true;
   warpToggle.checked = state.showWarp;
   heatmapToggle.checked = state.showHeatmap;
