@@ -354,7 +354,7 @@ function drawExternalLand(drawCtx, projectPoint) {
   const polygons = state.data.externalLand || [];
   if (!polygons.length) return;
   drawCtx.save();
-  drawCtx.fillStyle = "#edf1f5";
+  drawCtx.fillStyle = "#f3f6fa";
   drawCtx.strokeStyle = "rgba(79, 105, 135, 0.42)";
   drawCtx.lineWidth = 0.75;
   drawCtx.lineJoin = "round";
@@ -893,6 +893,7 @@ function drawMap(drawCtx, width, height) {
   const dy = clampToRange(desiredDy, minDy, maxDy);
   const transform = offsetTransform(baseTransform, dx, dy);
   const projectPoint = (point) => transform.toScreen(warpPoint(point));
+  const externalLandProjectPoint = (point) => transform.toScreen(point);
   state.currentRender = {
     warp: {
       inverseWarpPoint: state.showWarp ? inverseWarpPoint : (point) => point,
@@ -904,7 +905,7 @@ function drawMap(drawCtx, width, height) {
     anchorOffset: [dx, dy],
   };
 
-  drawExternalLand(drawCtx, projectPoint);
+  drawExternalLand(drawCtx, externalLandProjectPoint);
   for (const borough of state.data.boroughs) {
     for (const polygon of borough.polygons) {
       drawPolygonPath(drawCtx, polygon, projectPoint);
