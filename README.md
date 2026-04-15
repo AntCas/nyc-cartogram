@@ -1,6 +1,6 @@
-# NYC Subway-Weighted Projection
+# NYC Cartogram
 
-This project generates a subway-access weighted map of New York City as an SVG.
+This project generates a subway-access weighted map of New York City as an SVG and interactive web app.
 
 You can check it out here: https://castrio.me/nyc-cartogram
 
@@ -49,14 +49,21 @@ Website files:
 Cloudflare deploy:
 
 ```bash
-npm install -D wrangler
-npx wrangler login
-npm run deploy
+pnpm add -D wrangler@latest
+pnpm run deploy
 ```
 
 This repo includes:
 - [wrangler.jsonc](/Users/primaryuser/Desktop/nyc-projection/wrangler.jsonc) to upload the `site/` directory as static assets
-- [src/worker.js](/Users/primaryuser/Desktop/nyc-projection/src/worker.js) to serve the site from the `/nyc-transit-time-map` path prefix on `castrio.me`
+- [src/worker.js](/Users/primaryuser/Desktop/nyc-projection/src/worker.js) to serve the site from the `/nyc-cartogram/` path prefix on `castrio.me`
+
+Deploy notes:
+- The Worker serves the app at `https://castrio.me/nyc-cartogram/`.
+- `src/worker.js` redirects `/nyc-cartogram` to `/nyc-cartogram/` and strips the `/nyc-cartogram` prefix before fetching bundled assets.
+- Static assets are bundled from `site/`, so requests like `/nyc-cartogram/styles.css`, `/nyc-cartogram/app.js`, `/nyc-cartogram/favicon.svg`, and `/nyc-cartogram/data/commute_map_data.json` are all handled by the Worker deployment.
+- Disable any older Cloudflare URL Rewrite Rules or Cloud Connector routes for this app path. They can conflict with the Worker and cause 404s.
+- If this is your first local `pnpm` install and Wrangler dependencies were blocked, run `pnpm approve-builds` and approve the relevant packages before deploying again.
+- For local development, open `http://localhost:8000/site/`. For production, use `https://castrio.me/nyc-cartogram/`.
 
 Notes:
 - The map now uses a single shared geographic projection for boroughs, stations, route shapes, parks, and streets so transit layers stay aligned to the basemap.
