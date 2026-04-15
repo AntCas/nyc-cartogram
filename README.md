@@ -4,7 +4,7 @@ This project generates a subway-access weighted map of New York City as an SVG a
 
 You can check it out here: https://castrio.me/nyc
 
-<img width="1080" height="1350" alt="nyc-commute-cartogram-1776207855190" src="https://github.com/user-attachments/assets/38889219-dcd5-405c-b79e-56bfebc420b5" />
+<img width="1080" height="1350" alt="nyc-commute-cartogram-1776285343768" src="https://github.com/user-attachments/assets/e5324236-2a0e-48cd-b504-143b4cedc457" />
 
 
 The script:
