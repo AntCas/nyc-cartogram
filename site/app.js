@@ -17,6 +17,7 @@ const WARP_DISPLACEMENT_SCALE = 2.34;
 const WARP_MAX_SHIFT_CELLS = 6.6;
 const WARP_NODE_SMOOTHING_PASSES = 2;
 const WARP_EDGE_FADE_CELLS = 10;
+const SWIM_METERS_PER_MINUTE = 28;
 
 const state = {
   data: null,
@@ -72,6 +73,98 @@ function distance(a, b) {
   return Math.hypot(a[0] - b[0], a[1] - b[1]);
 }
 
+function pointInRing(point, ring) {
+  const [x, y] = point;
+  let inside = false;
+  let j = ring.length - 1;
+  for (let i = 0; i < ring.length; i += 1) {
+    const [xi, yi] = ring[i];
+    const [xj, yj] = ring[j];
+    const intersects = (yi > y) !== (yj > y);
+    if (intersects) {
+      const xHit = ((xj - xi) * (y - yi)) / ((yj - yi) || 1e-12) + xi;
+      if (x < xHit) inside = !inside;
+    }
+    j = i;
+  }
+  return inside;
+}
+
+function pointInPolygon(point, polygon) {
+  if (!polygon.length || !pointInRing(point, polygon[0])) return false;
+  for (let index = 1; index < polygon.length; index += 1) {
+    if (pointInRing(point, polygon[index])) return false;
+  }
+  return true;
+}
+
+function pointToSegmentProjection(point, start, end) {
+  const dx = end[0] - start[0];
+  const dy = end[1] - start[1];
+  const lengthSquared = dx * dx + dy * dy;
+  if (lengthSquared === 0) {
+    return { point: start.slice(), distance: distance(point, start) };
+  }
+  const t = clamp(((point[0] - start[0]) * dx + (point[1] - start[1]) * dy) / lengthSquared, 0, 1);
+  const projectedPoint = [start[0] + dx * t, start[1] + dy * t];
+  return { point: projectedPoint, distance: distance(point, projectedPoint) };
+}
+
+function locateNearestBoroughBorder(point) {
+  let best = { point: point.slice(), distance: Infinity };
+  for (const borough of state.data.boroughs) {
+    for (const polygon of borough.polygons) {
+      for (const ring of polygon) {
+        for (let index = 0; index < ring.length - 1; index += 1) {
+          const candidate = pointToSegmentProjection(point, ring[index], ring[index + 1]);
+          if (candidate.distance < best.distance) best = candidate;
+        }
+      }
+    }
+  }
+  return best;
+}
+
+function pointInBoroughs(point) {
+  for (const borough of state.data.boroughs) {
+    for (const polygon of borough.polygons) {
+      if (pointInPolygon(point, polygon)) return true;
+    }
+  }
+  return false;
+}
+
+function pointInExternalLand(point) {
+  for (const polygon of state.data.externalLand || []) {
+    if (pointInPolygon(point, polygon)) return true;
+  }
+  return false;
+}
+
+function classifySurface(point) {
+  if (pointInBoroughs(point)) return "borough";
+  return pointInExternalLand(point) ? "land" : "water";
+}
+
+function normalizeTravelPoint(point) {
+  const surface = classifySurface(point);
+  if (surface !== "water") {
+    return {
+      surface,
+      point,
+      swimMinutes: 0,
+      swimDistance: 0,
+    };
+  }
+  const border = locateNearestBoroughBorder(point);
+  return {
+    surface,
+    point: border.point,
+    swimMinutes: border.distance / SWIM_METERS_PER_MINUTE,
+    swimDistance: border.distance,
+  };
+}
+
 function lerp(a, b, t) {
   return a + (b - a) * t;
 }
@@ -113,6 +206,12 @@ function formatMinutes(minutes) {
   if (!Number.isFinite(minutes)) return "unreachable";
   if (minutes < 1) return "<1 min";
   return `${Math.round(minutes)} min`;
+}
+
+function formatTravelBreakdown(baseMinutes, swimMinutes) {
+  if (!Number.isFinite(baseMinutes)) return "unreachable";
+  if (swimMinutes < 0.5) return formatMinutes(baseMinutes);
+  return `${Math.round(baseMinutes)}m 🚇 + ${Math.round(swimMinutes)}m 🏊`;
 }
 
 function formatShareTime(date = new Date()) {
@@ -251,6 +350,22 @@ function traceBoroughMaskPath(drawCtx, projectPoint) {
   }
 }
 
+function drawExternalLand(drawCtx, projectPoint) {
+  const polygons = state.data.externalLand || [];
+  if (!polygons.length) return;
+  drawCtx.save();
+  drawCtx.fillStyle = "#edf1f5";
+  drawCtx.strokeStyle = "rgba(79, 105, 135, 0.42)";
+  drawCtx.lineWidth = 0.75;
+  drawCtx.lineJoin = "round";
+  for (const polygon of polygons) {
+    drawPolygonPath(drawCtx, polygon, projectPoint);
+    drawCtx.fill();
+    drawCtx.stroke();
+  }
+  drawCtx.restore();
+}
+
 function drawPolyline(drawCtx, points, projectPoint) {
   drawCtx.beginPath();
   points.forEach((point, index) => {
@@ -280,17 +395,20 @@ function nearestStations(point, count) {
     .slice(0, count);
 }
 
-function runDijkstra(originPoint) {
+function runDijkstra(origin) {
   const stateCount = state.data.routeStates.length;
   const distances = new Array(stateCount).fill(Infinity);
   const visited = new Array(stateCount).fill(false);
-  const seeds = nearestStations(originPoint, state.data.meta.originStationCount);
+  const seeds = nearestStations(origin.point, state.data.meta.originStationCount);
 
   for (const seed of seeds) {
     for (const routeStateIndex of state.data.stationStates[seed.index] || []) {
       const routeId = state.data.routeStates[routeStateIndex].routeId;
       const boardWait = state.data.routeWaits[routeId] ?? state.data.meta.defaultBoardWait ?? ENTRY_WAIT_MINUTES;
-      distances[routeStateIndex] = Math.min(distances[routeStateIndex], seed.walkMinutes + boardWait);
+      distances[routeStateIndex] = Math.min(
+        distances[routeStateIndex],
+        origin.swimMinutes + seed.walkMinutes + boardWait,
+      );
     }
   }
 
@@ -314,19 +432,31 @@ function runDijkstra(originPoint) {
   return { distances, seeds };
 }
 
-function estimateTravelMinutes(originDistances, destinationPoint) {
-  let bestMinutes = distance(state.originPoint, destinationPoint) / state.data.meta.walkMetersPerMinute;
-  const nearby = nearestStations(destinationPoint, state.data.meta.cellNearestStations);
+function estimateTravel(origin, originDistances, destinationPoint) {
+  const destination = normalizeTravelPoint(destinationPoint);
+  const swimMinutes = origin.swimMinutes + destination.swimMinutes;
+  let bestMinutes =
+    distance(origin.point, destination.point) / state.data.meta.walkMetersPerMinute +
+    swimMinutes;
+  const nearby = nearestStations(destination.point, state.data.meta.cellNearestStations);
   for (const station of nearby) {
     for (const routeStateIndex of state.data.stationStates[station.index] || []) {
-      bestMinutes = Math.min(bestMinutes, originDistances[routeStateIndex] + station.walkMinutes);
+      bestMinutes = Math.min(
+        bestMinutes,
+        originDistances[routeStateIndex] + station.walkMinutes + destination.swimMinutes,
+      );
     }
   }
-  return bestMinutes;
+  return {
+    minutes: bestMinutes,
+    baseMinutes: bestMinutes - swimMinutes,
+    swimMinutes,
+    destination,
+  };
 }
 
-function computeWarp(originPoint) {
-  const { distances, seeds } = runDijkstra(originPoint);
+function computeWarp(origin) {
+  const { distances, seeds } = runDijkstra(origin);
   const { gridCols, gridRows, bounds } = state.data.meta;
   const [minX, minY, maxX, maxY] = bounds;
   const spanX = maxX - minX;
@@ -340,7 +470,8 @@ function computeWarp(originPoint) {
     const cellIndex = state.data.mask[maskIndex];
     if (cellIndex === -1) continue;
     const cell = state.data.cells[cellIndex];
-    let bestMinutes = distance(originPoint, cell.point) / state.data.meta.walkMetersPerMinute;
+    let bestMinutes =
+      distance(origin.point, cell.point) / state.data.meta.walkMetersPerMinute + origin.swimMinutes;
     for (const [stationIndex, egressMinutes] of cell.access) {
       for (const routeStateIndex of state.data.stationStates[stationIndex] || []) {
         bestMinutes = Math.min(bestMinutes, distances[routeStateIndex] + egressMinutes);
@@ -657,6 +788,7 @@ function drawMap(drawCtx, width, height) {
 
   if (!state.originPoint) {
     const projectPoint = (point) => state.transform.toScreen(point);
+    drawExternalLand(drawCtx, projectPoint);
     for (const borough of state.data.boroughs) {
       for (const polygon of borough.polygons) {
         drawPolygonPath(drawCtx, polygon, projectPoint);
@@ -736,7 +868,8 @@ function drawMap(drawCtx, width, height) {
     return;
   }
 
-  const warp = state.showWarp || state.showHeatmap ? computeWarp(state.originPoint) : null;
+  const normalizedOrigin = normalizeTravelPoint(state.originPoint);
+  const warp = state.showWarp || state.showHeatmap ? computeWarp(normalizedOrigin) : null;
   const baseTransform = state.transform;
   const warpPoint = state.showWarp && warp ? warp.warpPoint : (point) => point;
   const inverseWarpPoint = warp ? warp.inverseWarpPoint : (point) => point;
@@ -765,11 +898,13 @@ function drawMap(drawCtx, width, height) {
       inverseWarpPoint: state.showWarp ? inverseWarpPoint : (point) => point,
       distances: warp?.distances ?? null,
       seeds: warp?.seeds ?? [],
+      origin: normalizedOrigin,
     },
     transform,
     anchorOffset: [dx, dy],
   };
 
+  drawExternalLand(drawCtx, projectPoint);
   for (const borough of state.data.boroughs) {
     for (const polygon of borough.polygons) {
       drawPolygonPath(drawCtx, polygon, projectPoint);
@@ -854,12 +989,24 @@ function drawMap(drawCtx, width, height) {
   const nearest = warp?.seeds?.[0] ?? null;
   const station = nearest ? state.data.stations[nearest.index] : null;
   if (state.pinned && state.cursorPoint) {
-    const probeMinutes = warp
-      ? estimateTravelMinutes(warp.distances, state.cursorPoint)
-      : distance(state.originPoint, state.cursorPoint) / state.data.meta.walkMetersPerMinute;
+    const probe = warp
+      ? estimateTravel(normalizedOrigin, warp.distances, state.cursorPoint)
+      : (() => {
+          const destination = normalizeTravelPoint(state.cursorPoint);
+          const swimMinutes = normalizedOrigin.swimMinutes + destination.swimMinutes;
+          const minutes =
+            distance(normalizedOrigin.point, destination.point) / state.data.meta.walkMetersPerMinute +
+            swimMinutes;
+          return {
+            minutes,
+            baseMinutes: minutes - swimMinutes,
+            swimMinutes,
+            destination,
+          };
+        })();
     statusText.textContent = station ? `Pinned near ${station.name}` : "Pinned origin";
     if (state.cursorScreen) {
-      drawHoverTooltip(drawCtx, state.cursorScreen, `${formatMinutes(probeMinutes)} away`);
+      drawHoverTooltip(drawCtx, state.cursorScreen, `${formatTravelBreakdown(probe.baseMinutes, probe.swimMinutes)} away`);
     }
   } else {
     statusText.textContent = station
