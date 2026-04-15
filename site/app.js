@@ -1,6 +1,6 @@
 const DATA_URL = new URL("./data/commute_map_data.json", import.meta.url).toString();
 const ENTRY_WAIT_MINUTES = 2.5;
-const MAX_TIME_MINUTES = 90;
+const MAX_TIME_MINUTES = 100;
 const MIN_AREA_WEIGHT = 1;
 const MAX_AREA_WEIGHT = 2.67;
 const PANEL_PADDING = 18;
@@ -242,10 +242,10 @@ function heatmapColor(minutes, alpha = 0.56) {
   const t = clamp(minutes / MAX_TIME_MINUTES, 0, 1);
   const stops = [
     { t: 0, color: [220, 69, 37] },
-    { t: 0.18, color: [244, 127, 46] },
-    { t: 0.36, color: [255, 196, 79] },
-    { t: 0.58, color: [248, 232, 156] },
-    { t: 0.78, color: [149, 188, 211] },
+    { t: 0.2, color: [244, 127, 46] },
+    { t: 0.4, color: [255, 196, 79] },
+    { t: 0.62, color: [248, 232, 156] },
+    { t: 0.8, color: [149, 188, 211] },
     { t: 1, color: [74, 103, 141] },
   ];
   let left = stops[0];
