@@ -13,6 +13,8 @@ const WEIGHT_BLUR_RADIUS = 2;
 const HOVER_DEADBAND = 14;
 const MOBILE_PIN_TAP_SLOP = 10;
 const MOBILE_PIN_HIT_RADIUS = 26;
+const DESKTOP_PIN_TAP_SLOP = 6;
+const DESKTOP_PIN_HIT_RADIUS = 18;
 const HEATMAP_RESOLUTION_SCALE = 2;
 const HEATMAP_BLUR_PX = 7;
 const HEATMAP_ALPHA = 0.8;
@@ -323,7 +325,7 @@ function setDrawerCollapsed(collapsed) {
 
 function syncMobileHelp() {
   if (!mobileMapHelp || !mobileMapInstructions || !mobileHelpBubble) return;
-  const collapsed = state.isMobile && state.mobileHelpCollapsed;
+  const collapsed = state.mobileHelpCollapsed;
   mobileMapHelp.classList.toggle("is-collapsed", collapsed);
   mobileMapInstructions.setAttribute("aria-hidden", String(collapsed));
   mobileHelpBubble.hidden = !collapsed;
@@ -331,13 +333,12 @@ function syncMobileHelp() {
 }
 
 function collapseMobileHelp() {
-  if (!state.isMobile || state.mobileHelpCollapsed) return;
+  if (state.mobileHelpCollapsed) return;
   state.mobileHelpCollapsed = true;
   syncMobileHelp();
 }
 
 function expandMobileHelp() {
-  if (!state.isMobile) return;
   state.mobileHelpCollapsed = false;
   syncMobileHelp();
 }
@@ -1329,19 +1330,13 @@ function drawMap(drawCtx, width, height) {
     drawCityBasemap(drawCtx, projectPoint);
     drawStations(drawCtx, projectPoint);
     drawBoroughLabels(drawCtx, projectPoint);
-
     if (state.cursorScreen) {
       drawMarker(drawCtx, state.cursorScreen, "#d75c2e", 24, 5.5);
-      if (!state.isMobile && state.showPinHint) {
-        drawHoverTooltip(drawCtx, state.cursorScreen, "Click to pin");
-      }
     }
 
-    statusText.textContent = state.isMobile
-      ? state.cursorScreen
-        ? "Release to pin the origin."
-        : "Drag on the map to preview an origin."
-      : "Hover to preview an origin, then click to pin it.";
+    statusText.textContent = state.cursorScreen
+      ? "Release to pin the origin."
+      : "Drag on the map to place an origin.";
     state.currentRender = {
       warp: {
         inverseWarpPoint: (point) => point,
@@ -1469,9 +1464,6 @@ function drawMap(drawCtx, width, height) {
       : state.showWarp
         ? "Warped commute-time view"
         : "Geographic commute-time view";
-    if (!state.isMobile && state.showPinHint && state.cursorScreen) {
-      drawHoverTooltip(drawCtx, state.cursorScreen, "Click to pin");
-    }
   }
   syncMobileSheet();
 }
@@ -1815,12 +1807,12 @@ function currentProjectedPinPositions() {
   return { originScreen, probeScreen };
 }
 
-function hitMobilePinTarget(screenPoint) {
+function hitPinTarget(screenPoint, hitRadius = MOBILE_PIN_HIT_RADIUS) {
   const { originScreen, probeScreen } = currentProjectedPinPositions();
-  if (probeScreen && screenDistance(screenPoint, probeScreen) <= MOBILE_PIN_HIT_RADIUS) {
+  if (probeScreen && screenDistance(screenPoint, probeScreen) <= hitRadius) {
     return "probe";
   }
-  if (originScreen && screenDistance(screenPoint, originScreen) <= MOBILE_PIN_HIT_RADIUS) {
+  if (originScreen && screenDistance(screenPoint, originScreen) <= hitRadius) {
     return "origin";
   }
   return null;
@@ -1836,16 +1828,11 @@ function clearProbePoint() {
   state.probePinned = false;
 }
 
-function handleMobilePointerDown(event) {
-  if (!state.isMobile) return;
-  closeSharePanel();
-  collapseMobileHelp();
-  const { screenPoint, worldPoint } = pointerToWorld(event);
-  if (!withinBounds(worldPoint)) return;
-  state.mobilePointerId = event.pointerId;
+function beginPinGesture(pointerId, screenPoint, worldPoint, hitRadius) {
+  state.mobilePointerId = pointerId;
   state.mobileGestureStartScreen = screenPoint;
   state.mobileGestureMoved = false;
-  state.mobileDragTarget = hitMobilePinTarget(screenPoint) || (!state.originPoint ? "new-origin" : "new-probe");
+  state.mobileDragTarget = hitPinTarget(screenPoint, hitRadius) || (!state.originPoint ? "new-origin" : "new-probe");
 
   if (state.mobileDragTarget === "origin" || state.mobileDragTarget === "new-origin") {
     state.originLabel = null;
@@ -1862,17 +1849,12 @@ function handleMobilePointerDown(event) {
   state.cursorPoint = worldPoint;
   state.showPinHint = false;
   state.dirty = true;
-  mapCanvas.setPointerCapture(event.pointerId);
-  requestDraw();
 }
 
-function handleMobilePointerMove(event) {
-  if (!state.isMobile || state.mobilePointerId !== event.pointerId || !state.mobileDragTarget) return;
-  const { screenPoint, worldPoint } = pointerToWorld(event);
-  if (!withinBounds(worldPoint)) return;
+function updatePinGesture(screenPoint, worldPoint, tapSlop) {
   state.mobileGestureMoved =
     state.mobileGestureMoved ||
-    screenDistance(state.mobileGestureStartScreen || screenPoint, screenPoint) > MOBILE_PIN_TAP_SLOP;
+    screenDistance(state.mobileGestureStartScreen || screenPoint, screenPoint) > tapSlop;
   state.cursorScreen = screenPoint;
   state.cursorPoint = worldPoint;
 
@@ -1885,6 +1867,24 @@ function handleMobilePointerMove(event) {
 
   state.dirty = true;
   requestDraw();
+}
+
+function handleMobilePointerDown(event) {
+  if (!state.isMobile) return;
+  closeSharePanel();
+  collapseMobileHelp();
+  const { screenPoint, worldPoint } = pointerToWorld(event);
+  if (!withinBounds(worldPoint)) return;
+  beginPinGesture(event.pointerId, screenPoint, worldPoint, MOBILE_PIN_HIT_RADIUS);
+  mapCanvas.setPointerCapture(event.pointerId);
+  requestDraw();
+}
+
+function handleMobilePointerMove(event) {
+  if (!state.isMobile || state.mobilePointerId !== event.pointerId || !state.mobileDragTarget) return;
+  const { screenPoint, worldPoint } = pointerToWorld(event);
+  if (!withinBounds(worldPoint)) return;
+  updatePinGesture(screenPoint, worldPoint, MOBILE_PIN_TAP_SLOP);
 }
 
 function resetMobileGestureState() {
@@ -1934,6 +1934,72 @@ function handleMobilePointerUp(event) {
 
 function handleMobilePointerCancel(event) {
   if (!state.isMobile || state.mobilePointerId !== event.pointerId) return;
+  state.cursorScreen = null;
+  state.cursorPoint = null;
+  resetMobileGestureState();
+  state.dirty = true;
+  requestDraw();
+}
+
+function handleDesktopPointerDown(event) {
+  if (state.isMobile) return;
+  closeSharePanel();
+  collapseMobileHelp();
+  const { screenPoint, worldPoint } = pointerToWorld(event);
+  if (!withinBounds(worldPoint)) return;
+  beginPinGesture(event.pointerId, screenPoint, worldPoint, DESKTOP_PIN_HIT_RADIUS);
+  mapCanvas.setPointerCapture(event.pointerId);
+  requestDraw();
+}
+
+function handleDesktopPointerMove(event) {
+  if (state.isMobile) return;
+  if (state.mobilePointerId !== event.pointerId || !state.mobileDragTarget) return;
+  const { screenPoint, worldPoint } = pointerToWorld(event);
+  if (!withinBounds(worldPoint)) return;
+  updatePinGesture(screenPoint, worldPoint, DESKTOP_PIN_TAP_SLOP);
+}
+
+function handleDesktopPointerUp(event) {
+  if (state.isMobile || state.mobilePointerId !== event.pointerId || !state.mobileDragTarget) return;
+
+  const dragTarget = state.mobileDragTarget;
+  const moved = state.mobileGestureMoved;
+
+  if (dragTarget === "origin" && !moved) {
+    clearPinnedOrigin();
+  } else if (dragTarget === "probe" && !moved) {
+    clearProbePoint();
+    state.dirty = true;
+    requestDraw();
+  } else {
+    if (dragTarget === "origin" || dragTarget === "new-origin") {
+      state.pinned = true;
+      state.pinnedPoint = state.originPoint ? state.originPoint.slice() : null;
+      state.pinnedScreen = null;
+      if (state.originPoint) {
+        replaceBrowserUrl(getCoordinateUrlFragment(state.originPoint));
+      }
+    } else if (dragTarget === "probe" || dragTarget === "new-probe") {
+      state.probePinned = true;
+    }
+    state.dirty = true;
+    syncMobileSheet();
+    requestDraw();
+  }
+
+  state.cursorScreen = null;
+  state.cursorPoint = null;
+  try {
+    mapCanvas.releasePointerCapture(event.pointerId);
+  } catch (error) {
+    console.error(error);
+  }
+  resetMobileGestureState();
+}
+
+function handleDesktopPointerCancel(event) {
+  if (state.isMobile || state.mobilePointerId !== event.pointerId) return;
   state.cursorScreen = null;
   state.cursorPoint = null;
   resetMobileGestureState();
@@ -2161,9 +2227,12 @@ async function init() {
   mobileHeatmapToggle.checked = state.showHeatmap;
 
   mapCanvas.addEventListener("pointerdown", (event) => {
-    if (!state.isMobile) return;
     event.preventDefault();
-    handleMobilePointerDown(event);
+    if (state.isMobile) {
+      handleMobilePointerDown(event);
+      return;
+    }
+    handleDesktopPointerDown(event);
   });
 
   mapCanvas.addEventListener("pointermove", (event) => {
@@ -2171,70 +2240,31 @@ async function init() {
       handleMobilePointerMove(event);
       return;
     }
-    const { screenPoint, worldPoint } = pointerToWorld(event);
-    if (!withinBounds(worldPoint)) return;
-    state.cursorScreen = screenPoint;
-    state.cursorPoint = worldPoint;
-    if (!state.pinned && (!state.originPoint || distance(state.originPoint, worldPoint) >= HOVER_DEADBAND)) {
-      state.originPoint = worldPoint;
-      state.originLabel = null;
-    }
-    state.dirty = true;
-    requestDraw();
+    handleDesktopPointerMove(event);
   });
 
   mapCanvas.addEventListener("pointerup", (event) => {
-    if (!state.isMobile) return;
     event.preventDefault();
-    handleMobilePointerUp(event);
+    if (state.isMobile) {
+      handleMobilePointerUp(event);
+      return;
+    }
+    handleDesktopPointerUp(event);
   });
 
   mapCanvas.addEventListener("pointercancel", (event) => {
-    if (!state.isMobile) return;
-    handleMobilePointerCancel(event);
-  });
-
-  mapCanvas.addEventListener("click", (event) => {
-    closeSharePanel();
-    if (state.isMobile) return;
-    const hovered = !state.isMobile && state.cursorScreen && state.cursorPoint;
-    const { screenPoint, worldPoint } = hovered
-      ? { screenPoint: state.cursorScreen.slice(), worldPoint: state.cursorPoint.slice() }
-      : pointerToWorld(event);
-    if (!withinBounds(worldPoint)) return;
-    state.cursorScreen = screenPoint;
-    state.cursorPoint = worldPoint;
-    state.showPinHint = false;
-
-    if (!state.pinned) {
-      state.originPoint = worldPoint;
-      state.originLabel = null;
-      state.pinnedPoint = worldPoint;
-      state.pinnedScreen = screenPoint;
-      state.pinned = true;
-      replaceBrowserUrl(getCoordinateUrlFragment(worldPoint));
-    } else {
-      state.pinned = false;
-      state.pinnedPoint = null;
-      state.pinnedScreen = null;
-      state.originPoint = worldPoint;
-      state.originLabel = null;
-      replaceBrowserUrl();
+    if (state.isMobile) {
+      handleMobilePointerCancel(event);
+      return;
     }
-    state.dirty = true;
-    syncMobileSheet();
-    requestDraw();
+    handleDesktopPointerCancel(event);
   });
 
   mapCanvas.addEventListener("pointerleave", () => {
     closeSharePanel();
-    if (state.isMobile) return;
+    if (state.isMobile || state.mobileDragTarget) return;
     state.cursorScreen = null;
-    if (!state.pinned) {
-      state.cursorPoint = null;
-      state.originPoint = null;
-      state.originLabel = null;
-    }
+    state.cursorPoint = null;
     state.dirty = true;
     requestDraw();
   });

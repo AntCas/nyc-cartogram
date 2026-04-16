@@ -529,11 +529,6 @@ canvas {
 
 
 .map-score-card {
-  position: absolute;
-  top: 18px;
-  left: 18px;
-  z-index: 2;
-  width: min(320px, calc(100% - 92px));
   padding: 14px 16px 15px;
   border-radius: 20px;
   border: 1px solid rgba(23, 48, 77, 0.12);
@@ -576,11 +571,98 @@ canvas {
 }
 
 .mobile-map-instructions {
-  display: none;
+  display: grid;
+  gap: 6px;
+  width: min(320px, calc(100vw - 92px));
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(23, 48, 77, 0.12);
+  background: rgba(255, 252, 247, 0.9);
+  backdrop-filter: blur(14px);
+  box-shadow: 0 18px 40px rgba(23, 48, 77, 0.12);
+  pointer-events: auto;
+  border-top-left-radius: 23px;
+}
+
+.mobile-map-instructions-title {
+  margin: 0 0 2px;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.mobile-map-instructions p {
+  margin: 0;
+  color: var(--ink);
+  font-size: 0.84rem;
+  line-height: 1.4;
+}
+
+.mobile-map-instructions-action {
+  margin-top: 8px;
+  border: 1px solid rgba(23, 48, 77, 0.12);
+  border-radius: 999px;
+  min-height: 40px;
+  padding: 0 16px;
+  background: rgba(255, 252, 247, 0.96);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.mobile-map-instructions-action:disabled {
+  opacity: 0.72;
 }
 
 .mobile-map-help {
+  display: block;
+  position: absolute;
+  top: 18px;
+  left: 18px;
+  z-index: 3;
+  pointer-events: none;
+  width: min(320px, calc(100vw - 92px));
+  min-height: 46px;
+}
+
+.mobile-map-help.is-collapsed .mobile-map-instructions {
   display: none;
+}
+
+.mobile-help-bubble {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 46px;
+  height: 46px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(23, 48, 77, 0.12);
+  border-radius: 999px;
+  background: rgba(255, 252, 247, 0.96);
+  color: var(--ink);
+  box-shadow: 0 18px 40px rgba(23, 48, 77, 0.12);
+  pointer-events: auto;
+}
+
+.mobile-help-bubble[hidden] {
+  display: none;
+}
+
+.mobile-help-bubble-icon {
+  width: 22px;
+  height: 22px;
+  fill: currentColor;
+}
+
+.desktop-help-reach {
+  width: 100%;
+  margin-top: 8px;
+  box-shadow: none;
 }
 
 .panel-card.is-immersive,
@@ -738,10 +820,6 @@ canvas {
     z-index: 5;
   }
 
-  .map-score-card {
-    display: none;
-  }
-
   .share-panel {
     display: none;
   }
@@ -764,79 +842,19 @@ canvas {
     border-top-left-radius: 23px;
   }
 
-  .mobile-map-instructions-title {
-    margin: 0 0 2px;
-    font-size: 0.72rem;
-    text-transform: uppercase;
-    letter-spacing: 0.14em;
-    color: var(--accent);
-    font-weight: 700;
-  }
-
   .mobile-map-instructions p {
-    margin: 0;
-    color: var(--ink);
     font-size: 0.82rem;
     line-height: 1.35;
   }
 
-  .mobile-map-instructions-action {
-    margin-top: 8px;
-    border: 1px solid rgba(23, 48, 77, 0.12);
-    border-radius: 999px;
-    min-height: 40px;
-    padding: 0 16px;
-    background: rgba(255, 252, 247, 0.96);
-    color: var(--ink);
-    font: inherit;
-    font-size: 0.9rem;
-    font-weight: 700;
-  }
-
-  .mobile-map-instructions-action:disabled {
-    opacity: 0.72;
-  }
-
   .mobile-map-help {
-    display: block;
-    position: absolute;
     top: calc(env(safe-area-inset-top) + 14px);
     left: 14px;
-    z-index: 3;
-    pointer-events: none;
     width: min(272px, calc(100vw - 28px));
-    min-height: 46px;
   }
 
-  .mobile-map-help.is-collapsed .mobile-map-instructions {
+  .desktop-help-reach {
     display: none;
-  }
-
-  .mobile-help-bubble {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 46px;
-    height: 46px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    border: 1px solid rgba(23, 48, 77, 0.12);
-    border-radius: 999px;
-    background: rgba(255, 252, 247, 0.96);
-    color: var(--ink);
-    box-shadow: 0 18px 40px rgba(23, 48, 77, 0.12);
-    pointer-events: auto;
-  }
-
-  .mobile-help-bubble[hidden] {
-    display: none;
-  }
-
-  .mobile-help-bubble-icon {
-    width: 22px;
-    height: 22px;
-    fill: currentColor;
   }
 
   .mobile-sheet {
