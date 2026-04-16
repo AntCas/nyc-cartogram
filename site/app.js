@@ -1643,7 +1643,7 @@ function exportShareImage() {
 
   exportCtx.fillStyle = "#17304d";
   exportCtx.font = '700 58px "Avenir Next", "Helvetica Neue", Helvetica, sans-serif';
-  exportCtx.fillText("New York by commute time", 72, 146);
+  exportCtx.fillText("New York City", 72, 146);
 
   const nearestSeed = state.currentRender?.warp?.seeds?.[0];
   const nearestStationName = nearestSeed ? state.data.stations[nearestSeed.index].name : "NYC subway";
