@@ -2577,6 +2577,13 @@ async function init() {
     useCurrentLocation();
   });
 
+  mobileMapInstructions.addEventListener("click", (event) => {
+    if (event.target instanceof Element && event.target.closest("#mobileInstructionsLocateButton")) {
+      return;
+    }
+    collapseMobileHelp();
+  });
+
   mobileHelpBubble.addEventListener("click", () => {
     expandMobileHelp();
   });
