@@ -57,12 +57,17 @@ const addressInput = document.getElementById("addressInput");
 const searchButton = document.getElementById("searchButton");
 const shareButton = document.getElementById("shareButton");
 const sharePanel = document.getElementById("sharePanel");
+const shareNativeRow = document.getElementById("shareNativeRow");
 const nativeShareAction = document.getElementById("nativeShareAction");
-const copyLinkAction = document.getElementById("copyLinkAction");
 const shareXAction = document.getElementById("shareXAction");
 const shareFacebookAction = document.getElementById("shareFacebookAction");
+const shareInstagramAction = document.getElementById("shareInstagramAction");
 const shareLinkedInAction = document.getElementById("shareLinkedInAction");
 const downloadImageAction = document.getElementById("downloadImageAction");
+const shareXIcon = document.getElementById("shareXIcon");
+const shareFacebookIcon = document.getElementById("shareFacebookIcon");
+const shareInstagramIcon = document.getElementById("shareInstagramIcon");
+const shareLinkedInIcon = document.getElementById("shareLinkedInIcon");
 const searchMeta = document.getElementById("searchMeta");
 const searchResults = document.getElementById("searchResults");
 const reachScoreCard = document.getElementById("reachScoreCard");
@@ -70,6 +75,12 @@ const reachScoreValue = document.getElementById("reachScoreValue");
 const reachScoreMeta = document.getElementById("reachScoreMeta");
 const ctx = mapCanvas.getContext("2d");
 const panelCard = document.querySelector(".panel-card");
+
+shareXIcon.src = new URL("./x.png", import.meta.url).toString();
+shareFacebookIcon.src = new URL("./Facebook.png", import.meta.url).toString();
+shareInstagramIcon.src = new URL("./Instagram.png", import.meta.url).toString();
+shareLinkedInIcon.src = new URL("./LinkedIn.png", import.meta.url).toString();
+
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
@@ -1545,7 +1556,7 @@ function openSharePanel() {
   shareXAction.href = `https://x.com/intent/post?url=${encodedUrl}&text=${encodedText}`;
   shareFacebookAction.href = `https://www.facebook.com/sharer/sharer.php?u=${encodedUrl}`;
   shareLinkedInAction.href = `https://www.linkedin.com/sharing/share-offsite/?url=${encodedUrl}`;
-  nativeShareAction.hidden = !navigator.share;
+  shareNativeRow.hidden = !navigator.share;
   sharePanel.hidden = false;
   shareButton.setAttribute("aria-expanded", "true");
 }
@@ -1830,17 +1841,6 @@ async function init() {
     }
   });
 
-  copyLinkAction.addEventListener("click", async () => {
-    try {
-      await navigator.clipboard.writeText(getShareUrl());
-      searchMeta.textContent = "Link copied.";
-      closeSharePanel();
-    } catch (error) {
-      console.error(error);
-      searchMeta.textContent = "Could not copy the link. Try again.";
-    }
-  });
-
   downloadImageAction.addEventListener("click", () => {
     closeSharePanel();
     downloadShareImage().catch((error) => {
@@ -1848,6 +1848,19 @@ async function init() {
       searchMeta.textContent = "Could not save the image. Try again.";
       shareButton.disabled = false;
     });
+  });
+
+  shareInstagramAction.addEventListener("click", async () => {
+    closeSharePanel();
+    try {
+      await navigator.clipboard.writeText(getShareUrl());
+      await downloadShareImage();
+      searchMeta.textContent = "Image downloaded and link copied for Instagram.";
+    } catch (error) {
+      console.error(error);
+      searchMeta.textContent = "Could not prep the Instagram share. Try again.";
+      shareButton.disabled = false;
+    }
   });
 
   for (const link of [shareXAction, shareFacebookAction, shareLinkedInAction]) {

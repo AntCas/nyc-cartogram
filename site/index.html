@@ -112,16 +112,32 @@
               </button>
               <button id="shareButton" class="pin-button share-button icon-button map-corner-button" type="button" aria-label="Share" title="Share" aria-haspopup="menu" aria-expanded="false" aria-controls="sharePanel">
                 <svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true">
-                  <path d="M12 21l-8-9h6v-12h4v12h6l-8 9zm9-1v2h-18v-2h-2v4h22v-4h-2z" />
+                  <path d="M16 15v4l8-8.035-8-7.965v4s-13.277 2.144-16 14c5.796-6.206 16-6 16-6z" />
                 </svg>
               </button>
               <div id="sharePanel" class="share-panel" role="menu" aria-label="Share options" hidden>
-                <button id="nativeShareAction" class="share-panel-item" type="button" role="menuitem" hidden>Share...</button>
-                <button id="copyLinkAction" class="share-panel-item" type="button" role="menuitem">Copy link</button>
-                <a id="shareXAction" class="share-panel-item" href="#" target="_blank" rel="noreferrer" role="menuitem">Share on X</a>
-                <a id="shareFacebookAction" class="share-panel-item" href="#" target="_blank" rel="noreferrer" role="menuitem">Share on Facebook</a>
-                <a id="shareLinkedInAction" class="share-panel-item" href="#" target="_blank" rel="noreferrer" role="menuitem">Share on LinkedIn</a>
-                <button id="downloadImageAction" class="share-panel-item" type="button" role="menuitem">Download image</button>
+                <div id="shareNativeRow" class="share-panel-native" hidden>
+                  <button id="nativeShareAction" class="share-panel-item share-panel-pill" type="button" role="menuitem">Share...</button>
+                </div>
+                <div class="share-panel-bar" role="none">
+                  <a id="shareXAction" class="share-panel-item share-panel-icon" href="#" target="_blank" rel="noreferrer" role="menuitem" aria-label="Share on X" title="Share on X">
+                    <img id="shareXIcon" alt="" />
+                  </a>
+                  <a id="shareFacebookAction" class="share-panel-item share-panel-icon" href="#" target="_blank" rel="noreferrer" role="menuitem" aria-label="Share on Facebook" title="Share on Facebook">
+                    <img id="shareFacebookIcon" alt="" />
+                  </a>
+                  <button id="shareInstagramAction" class="share-panel-item share-panel-icon" type="button" role="menuitem" aria-label="Prepare for Instagram" title="Prepare for Instagram">
+                    <img id="shareInstagramIcon" alt="" />
+                  </button>
+                  <a id="shareLinkedInAction" class="share-panel-item share-panel-icon" href="#" target="_blank" rel="noreferrer" role="menuitem" aria-label="Share on LinkedIn" title="Share on LinkedIn">
+                    <img id="shareLinkedInIcon" alt="" />
+                  </a>
+                  <button id="downloadImageAction" class="share-panel-item share-panel-icon" type="button" role="menuitem" aria-label="Download image" title="Download image">
+                    <svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M12 21l-8-9h6v-12h4v12h6l-8 9zm9-1v2h-18v-2h-2v4h22v-4h-2z" />
+                    </svg>
+                  </button>
+                </div>
               </div>
             </div>
             <div id="heatmapLegend" class="legend legend-overlay" aria-live="polite">

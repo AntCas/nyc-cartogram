@@ -418,7 +418,9 @@ canvas {
   top: 48px;
   right: 0;
   z-index: 3;
-  min-width: 208px;
+  display: grid;
+  gap: 10px;
+  width: min(376px, calc(100vw - 40px));
   padding: 8px;
   border-radius: 18px;
   border: 1px solid rgba(23, 48, 77, 0.12);
@@ -432,12 +434,10 @@ canvas {
 }
 
 .share-panel-item {
-  display: flex;
-  width: 100%;
+  display: inline-flex;
   align-items: center;
-  justify-content: flex-start;
-  min-height: 40px;
-  padding: 10px 12px;
+  justify-content: center;
+  flex: 0 0 auto;
   border: 0;
   border-radius: 12px;
   background: transparent;
@@ -456,6 +456,52 @@ canvas {
 .share-panel-item[hidden] {
   display: none;
 }
+
+.share-panel-pill {
+  min-height: 40px;
+  width: 100%;
+  padding: 10px 14px;
+  justify-content: center;
+}
+
+.share-panel-native[hidden] {
+  display: none;
+}
+
+.share-panel-bar {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  margin: 0 auto;
+  padding-bottom: 2px;
+}
+
+.share-panel-icon {
+  flex: 0 0 44px;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  overflow: hidden;
+  border-radius: 14px;
+}
+
+.share-panel-icon img,
+.share-panel-icon .button-icon {
+  width: 24px;
+  height: 24px;
+  display: block;
+  max-width: 24px;
+  max-height: 24px;
+}
+
+.share-panel-icon img {
+  object-fit: contain;
+}
+
 
 .map-score-card {
   position: absolute;
