@@ -413,6 +413,31 @@ canvas {
   position: static;
 }
 
+.map-zoom-controls {
+  position: absolute;
+  left: 14px;
+  bottom: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 2;
+}
+
+.map-zoom-button {
+  background: rgba(255, 252, 247, 0.92);
+}
+
+.map-zoom-button:disabled {
+  opacity: 0.48;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.zoom-icon {
+  width: 20px;
+  height: 20px;
+}
+
 .share-panel {
   position: absolute;
   top: 48px;
@@ -707,6 +732,12 @@ canvas {
     max-width: calc(100vw - 28px);
   }
 
+  .map-zoom-controls {
+    left: 14px;
+    bottom: calc(env(safe-area-inset-bottom) + 96px);
+    z-index: 5;
+  }
+
   .map-score-card {
     display: none;
   }
@@ -730,16 +761,7 @@ canvas {
     backdrop-filter: blur(14px);
     box-shadow: 0 18px 40px rgba(23, 48, 77, 0.12);
     pointer-events: auto;
-    transform-origin: 23px 23px;
-    transition:
-      opacity 320ms ease,
-      transform 620ms cubic-bezier(0.2, 0.86, 0.18, 1),
-      clip-path 620ms cubic-bezier(0.2, 0.86, 0.18, 1),
-      border-radius 620ms cubic-bezier(0.2, 0.86, 0.18, 1),
-      filter 420ms ease;
-    clip-path: inset(0 0 0 0 round 18px);
     border-top-left-radius: 23px;
-    filter: blur(0);
   }
 
   .mobile-map-instructions-title {
@@ -787,17 +809,7 @@ canvas {
   }
 
   .mobile-map-help.is-collapsed .mobile-map-instructions {
-    opacity: 0;
-    transform: scale(0.17);
-    clip-path: circle(23px at 23px 23px);
-    border-radius: 999px;
-    filter: blur(8px);
-    transition:
-      opacity 320ms ease,
-      transform 720ms cubic-bezier(0.18, 0.9, 0.16, 1),
-      clip-path 720ms cubic-bezier(0.18, 0.9, 0.16, 1),
-      border-radius 720ms cubic-bezier(0.18, 0.9, 0.16, 1),
-      filter 420ms ease;
+    display: none;
   }
 
   .mobile-help-bubble {
@@ -815,11 +827,6 @@ canvas {
     color: var(--ink);
     box-shadow: 0 18px 40px rgba(23, 48, 77, 0.12);
     pointer-events: auto;
-    transition:
-      opacity 320ms ease,
-      transform 620ms cubic-bezier(0.18, 0.9, 0.16, 1),
-      scale 620ms cubic-bezier(0.18, 0.9, 0.16, 1);
-    transform: scale(1);
   }
 
   .mobile-help-bubble[hidden] {

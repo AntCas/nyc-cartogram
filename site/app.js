@@ -3,6 +3,9 @@ const ENTRY_WAIT_MINUTES = 2.5;
 const MAX_TIME_MINUTES = 100;
 const MIN_AREA_WEIGHT = 1;
 const MAX_AREA_WEIGHT = 2.67;
+const MIN_VIEWPORT_SCALE = 1;
+const MAX_VIEWPORT_SCALE = 4;
+const VIEWPORT_ZOOM_STEP = 1.35;
 const PANEL_PADDING = 18;
 const ROUTE_LINE_WIDTH = 2.2;
 const WEIGHT_BLUR_PASSES = 2;
@@ -36,6 +39,8 @@ const state = {
   isMobile: false,
   drawerCollapsed: false,
   mobileHelpCollapsed: false,
+  viewportScale: 1,
+  viewportCenter: null,
   cursorPoint: null,
   cursorScreen: null,
   originPoint: null,
@@ -62,6 +67,8 @@ const heatmapToggle = document.getElementById("heatmapToggle");
 const heatmapLegend = document.getElementById("heatmapLegend");
 const heatmapLegendMin = document.getElementById("heatmapLegendMin");
 const heatmapLegendMax = document.getElementById("heatmapLegendMax");
+const zoomInButton = document.getElementById("zoomInButton");
+const zoomOutButton = document.getElementById("zoomOutButton");
 const fullscreenButton = document.getElementById("fullscreenButton");
 const searchForm = document.getElementById("searchForm");
 const addressInput = document.getElementById("addressInput");
@@ -449,24 +456,50 @@ function minuteToAreaWeight(minutes) {
   return MIN_AREA_WEIGHT + (1 - t) * (MAX_AREA_WEIGHT - MIN_AREA_WEIGHT);
 }
 
-function buildTransform(bounds, width, height, padding = PANEL_PADDING) {
+function defaultMapCenter(bounds = state.data?.meta?.bounds) {
+  if (!bounds) return [0, 0];
+  const [minX, minY, maxX, maxY] = bounds;
+  return [(minX + maxX) / 2, (minY + maxY) / 2];
+}
+
+function pinMidpoint(a, b) {
+  return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+}
+
+function currentZoomFocusPoint() {
+  if (state.originPoint && state.probePoint) return pinMidpoint(state.originPoint, state.probePoint);
+  if (state.originPoint) return state.originPoint.slice();
+  return defaultMapCenter();
+}
+
+function activeViewportCenter() {
+  if (state.viewportScale <= MIN_VIEWPORT_SCALE) return null;
+  return state.viewportCenter ? state.viewportCenter.slice() : currentZoomFocusPoint();
+}
+
+function buildTransform(bounds, width, height, padding = PANEL_PADDING, zoom = 1, centerPoint = null) {
   const [minX, minY, maxX, maxY] = bounds;
   const spanX = maxX - minX;
   const spanY = maxY - minY;
-  const scale = Math.min((width - padding * 2) / spanX, (height - padding * 2) / spanY);
-  const drawWidth = spanX * scale;
-  const drawHeight = spanY * scale;
-  const offsetX = (width - drawWidth) / 2;
-  const offsetY = (height - drawHeight) / 2;
+  const baseScale = Math.min((width - padding * 2) / spanX, (height - padding * 2) / spanY);
+  const scale = baseScale * zoom;
+  const [rawCenterX, rawCenterY] = centerPoint || defaultMapCenter(bounds);
+  const centerX = clamp(rawCenterX, minX, maxX);
+  const centerY = clamp(rawCenterY, minY, maxY);
+  const offsetX = width / 2;
+  const offsetY = height / 2;
 
   return {
     scale,
+    baseScale,
+    center: [centerX, centerY],
+    cacheKey: `${width}:${height}:${scale}:${centerX}:${centerY}`,
     toScreen(point) {
       const [x, y] = point;
-      return [offsetX + (x - minX) * scale, offsetY + drawHeight - (y - minY) * scale];
+      return [offsetX + (x - centerX) * scale, offsetY - (y - centerY) * scale];
     },
     toWorld(x, y) {
-      return [minX + (x - offsetX) / scale, minY + (drawHeight - (y - offsetY)) / scale];
+      return [centerX + (x - offsetX) / scale, centerY - (y - offsetY) / scale];
     },
   };
 }
@@ -795,12 +828,13 @@ function buildBaseMapCache(width, height, sourceTransform) {
   const surface = createCanvasSurface(width, height);
   surface.context.clearRect(0, 0, width, height);
   drawCityBasemap(surface.context, (point) => sourceTransform.toScreen(point), { includeBoroughBorders: false });
+  surface.cacheKey = sourceTransform.cacheKey;
   return surface;
 }
 
 function getBaseMapCache(width, height, sourceTransform) {
   const cache = state.baseMapCache;
-  if (cache && cache.width === width && cache.height === height) {
+  if (cache && cache.width === width && cache.height === height && cache.cacheKey === sourceTransform.cacheKey) {
     return cache;
   }
   const nextCache = buildBaseMapCache(width, height, sourceTransform);
@@ -1709,15 +1743,42 @@ function requestDraw() {
   });
 }
 
-function resize() {
-  state.isMobile = isMobileLayout();
+function syncZoomControls() {
+  if (!zoomInButton || !zoomOutButton) return;
+  zoomInButton.disabled = state.viewportScale >= MAX_VIEWPORT_SCALE;
+  zoomOutButton.disabled = state.viewportScale <= MIN_VIEWPORT_SCALE;
+}
+
+function updateViewportTransform() {
+  if (!state.data) return;
   const size = createCanvasBacking(mapCanvas);
-  state.transform = buildTransform(state.data.meta.bounds, size.width, size.height);
+  state.transform = buildTransform(
+    state.data.meta.bounds,
+    size.width,
+    size.height,
+    PANEL_PADDING,
+    state.viewportScale,
+    activeViewportCenter(),
+  );
   state.baseMapCache = null;
   state.dirty = true;
+  syncZoomControls();
   syncMobileSheet();
   syncMobileHelp();
   requestDraw();
+}
+
+function setViewportScale(nextScale) {
+  const clampedScale = clamp(nextScale, MIN_VIEWPORT_SCALE, MAX_VIEWPORT_SCALE);
+  state.viewportScale = clampedScale;
+  state.viewportCenter = clampedScale > MIN_VIEWPORT_SCALE ? currentZoomFocusPoint() : null;
+  state.pinnedScreen = null;
+  updateViewportTransform();
+}
+
+function resize() {
+  state.isMobile = isMobileLayout();
+  updateViewportTransform();
 }
 
 function pointerToWorld(event) {
@@ -2070,6 +2131,7 @@ async function init() {
   warpToggle.checked = state.showWarp;
   heatmapToggle.checked = state.showHeatmap;
   syncHeatmapLegend();
+  syncZoomControls();
 
   const manhattan = state.data.boroughs.find((borough) => borough.name === "Manhattan");
   state.cursorPoint = null;
@@ -2201,6 +2263,16 @@ async function init() {
     warpToggle.checked = state.showWarp;
     state.dirty = true;
     requestDraw();
+  });
+
+  zoomOutButton.addEventListener("click", () => {
+    closeSharePanel();
+    setViewportScale(state.viewportScale / VIEWPORT_ZOOM_STEP);
+  });
+
+  zoomInButton.addEventListener("click", () => {
+    closeSharePanel();
+    setViewportScale(state.viewportScale * VIEWPORT_ZOOM_STEP);
   });
 
   fullscreenButton.addEventListener("click", async () => {
