@@ -356,14 +356,17 @@ function formatCoordinate(value) {
   return Number(value).toFixed(SHARE_COORDINATE_DECIMALS);
 }
 
-function originPathForPoint(point) {
+function formatCoordinatePair(point) {
   const { lat, lon } = worldToLonLat(point);
-  return `@${formatCoordinate(lat)},${formatCoordinate(lon)}`;
+  return `${formatCoordinate(lat)},${formatCoordinate(lon)}`;
+}
+
+function originPathForPoint(point) {
+  return `@${formatCoordinatePair(point)}`;
 }
 
 function originQueryForPoint(point) {
-  const { lat, lon } = worldToLonLat(point);
-  return `?origin=${formatCoordinate(lat)},${formatCoordinate(lon)}`;
+  return `?origin=${formatCoordinatePair(point)}`;
 }
 
 function parseCoordinatePair(value) {
@@ -396,12 +399,49 @@ function getCoordinateUrlFragment(point) {
   return isLocalStaticDev() ? originQueryForPoint(point) : originPathForPoint(point);
 }
 
-function parseSharedOrigin() {
-  return (
+function buildViewUrlFragment(
+  originPoint = state.pinnedPoint || state.originPoint,
+  probePoint = state.probePoint,
+  zoomLevel = state.viewportScale,
+) {
+  const params = new URLSearchParams();
+  if (isLocalStaticDev() && originPoint) {
+    params.set("origin", formatCoordinatePair(originPoint));
+  }
+  if (probePoint) {
+    params.set("distance", formatCoordinatePair(probePoint));
+  }
+  if (zoomLevel > MIN_VIEWPORT_SCALE) {
+    params.set("zoom", zoomLevel.toFixed(2));
+  }
+  if (!state.showWarp) {
+    params.set("warp", "0");
+  }
+  if (!state.showHeatmap) {
+    params.set("heatmap", "0");
+  }
+
+  const query = params.toString();
+  if (isLocalStaticDev()) {
+    return query ? `?${query}` : "";
+  }
+
+  const path = originPoint ? originPathForPoint(originPoint) : "";
+  return query ? `${path}?${query}` : path;
+}
+
+function parseSharedView() {
+  const searchParams = new URLSearchParams(window.location.search);
+  const origin =
     parseOriginPath() ||
-    parseCoordinatePair(new URLSearchParams(window.location.search).get("origin")) ||
-    parseCoordinatePair(window.location.hash.replace(/^#/, ""))
-  );
+    parseCoordinatePair(searchParams.get("origin")) ||
+    parseCoordinatePair(window.location.hash.replace(/^#/, ""));
+  const probe = parseCoordinatePair(searchParams.get("distance"));
+  const zoomRaw = Number(searchParams.get("zoom"));
+  const zoom = Number.isFinite(zoomRaw) ? clamp(zoomRaw, MIN_VIEWPORT_SCALE, MAX_VIEWPORT_SCALE) : null;
+  const warp = searchParams.has("warp") ? searchParams.get("warp") !== "0" : null;
+  const heatmap = searchParams.has("heatmap") ? searchParams.get("heatmap") !== "0" : null;
+  return { origin, probe, zoom, warp, heatmap };
 }
 
 function replaceBrowserUrl(pathOrQuery = "") {
@@ -409,9 +449,12 @@ function replaceBrowserUrl(pathOrQuery = "") {
   window.history.replaceState(null, "", nextUrl);
 }
 
+function syncBrowserUrl() {
+  replaceBrowserUrl(buildViewUrlFragment());
+}
+
 function getShareUrl() {
-  const point = state.pinnedPoint || state.originPoint;
-  const pathOrQuery = point ? getCoordinateUrlFragment(point) : "";
+  const pathOrQuery = buildViewUrlFragment();
   return new URL(pathOrQuery, window.location.origin + getBasePath()).toString();
 }
 
@@ -1413,8 +1456,7 @@ function drawMap(drawCtx, width, height) {
   });
 
   if (state.showHeatmap && warp) {
-    const heatmapTransform = state.showWarp ? transform : baseTransform;
-    drawHeatmap(drawCtx, warp, heatmapTransform, state.showWarp);
+    drawHeatmap(drawCtx, warp, transform, state.showWarp);
   }
 
   drawStations(drawCtx, projectPoint);
@@ -1816,6 +1858,7 @@ function setViewportScale(nextScale) {
   state.viewportScale = clampedScale;
   state.viewportCenter = clampedScale > MIN_VIEWPORT_SCALE ? currentZoomFocusPoint() : null;
   state.pinnedScreen = null;
+  syncBrowserUrl();
   updateViewportTransform();
 }
 
@@ -1871,6 +1914,7 @@ function setProbePoint(worldPoint) {
 function clearProbePoint() {
   state.probePoint = null;
   state.probePinned = false;
+  syncBrowserUrl();
 }
 
 function beginPinGesture(pointerId, screenPoint, worldPoint, hitRadius) {
@@ -1956,11 +2000,10 @@ function handleMobilePointerUp(event) {
       state.pinned = true;
       state.pinnedPoint = state.originPoint ? state.originPoint.slice() : null;
       state.pinnedScreen = state.cursorScreen ? state.cursorScreen.slice() : null;
-      if (state.originPoint) {
-        replaceBrowserUrl(getCoordinateUrlFragment(state.originPoint));
-      }
+      syncBrowserUrl();
     } else if (dragTarget === "probe" || dragTarget === "new-probe") {
       state.probePinned = true;
+      syncBrowserUrl();
     }
     state.dirty = true;
     syncMobileSheet();
@@ -2022,11 +2065,10 @@ function handleDesktopPointerUp(event) {
       state.pinned = true;
       state.pinnedPoint = state.originPoint ? state.originPoint.slice() : null;
       state.pinnedScreen = null;
-      if (state.originPoint) {
-        replaceBrowserUrl(getCoordinateUrlFragment(state.originPoint));
-      }
+      syncBrowserUrl();
     } else if (dragTarget === "probe" || dragTarget === "new-probe") {
       state.probePinned = true;
+      syncBrowserUrl();
     }
     state.dirty = true;
     syncMobileSheet();
@@ -2083,7 +2125,7 @@ function setPinnedOrigin(worldPoint) {
   state.pinnedScreen = null;
   state.pinned = true;
   state.cursorPoint = worldPoint;
-  replaceBrowserUrl(getCoordinateUrlFragment(worldPoint));
+  syncBrowserUrl();
   state.dirty = true;
   syncMobileSheet();
   requestDraw();
@@ -2098,7 +2140,7 @@ function clearPinnedOrigin() {
   state.cursorPoint = null;
   state.originPoint = null;
   state.originLabel = null;
-  replaceBrowserUrl();
+  syncBrowserUrl();
   state.dirty = true;
   syncMobileSheet();
   requestDraw();
@@ -2245,25 +2287,42 @@ async function init() {
   state.isMobile = isMobileLayout();
   state.baseMapCache = null;
   state.ready = true;
-  warpToggle.checked = state.showWarp;
-  heatmapToggle.checked = state.showHeatmap;
-  syncHeatmapLegend();
-  syncZoomControls();
 
   const manhattan = state.data.boroughs.find((borough) => borough.name === "Manhattan");
   state.cursorPoint = null;
   state.originPoint = null;
 
-  const sharedOrigin = parseSharedOrigin();
-  if (sharedOrigin) {
-    const restoredPoint = lonLatToWorld(sharedOrigin.lon, sharedOrigin.lat);
+  const sharedView = parseSharedView();
+  if (sharedView.zoom) {
+    state.viewportScale = sharedView.zoom;
+  }
+  if (sharedView.warp !== null) {
+    state.showWarp = sharedView.warp;
+  }
+  if (sharedView.heatmap !== null) {
+    state.showHeatmap = sharedView.heatmap;
+  }
+  if (sharedView.origin) {
+    const restoredPoint = lonLatToWorld(sharedView.origin.lon, sharedView.origin.lat);
     if (withinBounds(restoredPoint)) {
       state.originPoint = restoredPoint;
       state.pinnedPoint = restoredPoint;
       state.cursorPoint = restoredPoint;
       state.pinned = true;
+      if (sharedView.probe) {
+        const restoredProbe = lonLatToWorld(sharedView.probe.lon, sharedView.probe.lat);
+        if (withinBounds(restoredProbe)) {
+          state.probePoint = restoredProbe;
+          state.probePinned = true;
+        }
+      }
     }
   }
+
+  warpToggle.checked = state.showWarp;
+  heatmapToggle.checked = state.showHeatmap;
+  syncHeatmapLegend();
+  syncZoomControls();
 
   resize();
   window.addEventListener("resize", resize);
@@ -2319,6 +2378,7 @@ async function init() {
     state.showHeatmap = heatmapToggle.checked;
     mobileHeatmapToggle.checked = state.showHeatmap;
     syncHeatmapLegend();
+    syncBrowserUrl();
     state.dirty = true;
     requestDraw();
   });
@@ -2327,6 +2387,7 @@ async function init() {
     closeSharePanel();
     state.showWarp = warpToggle.checked;
     mobileWarpToggle.checked = state.showWarp;
+    syncBrowserUrl();
     state.dirty = true;
     requestDraw();
   });
@@ -2335,6 +2396,7 @@ async function init() {
     state.showHeatmap = mobileHeatmapToggle.checked;
     heatmapToggle.checked = state.showHeatmap;
     syncHeatmapLegend();
+    syncBrowserUrl();
     state.dirty = true;
     requestDraw();
   });
@@ -2342,6 +2404,7 @@ async function init() {
   mobileWarpToggle.addEventListener("change", () => {
     state.showWarp = mobileWarpToggle.checked;
     warpToggle.checked = state.showWarp;
+    syncBrowserUrl();
     state.dirty = true;
     requestDraw();
   });
