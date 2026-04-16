@@ -34,6 +34,7 @@ const SHARE_COORDINATE_DECIMALS = 5;
 const EMOJI_BURST_INTERVAL_MS = 90;
 const EMOJI_BURST_PER_TICK = 3;
 const EMOJI_BURST_LIFETIME_MS = 900;
+const MOBILE_DRAWER_SWIPE_THRESHOLD_PX = 36;
 
 const EMOJI_BURST_SETS = {
   github: ["💻", "🖥️", "⌨️", "⚙️", "🧑‍💻"],
@@ -71,6 +72,10 @@ const state = {
   mobileDragTarget: null,
   mobileGestureStartScreen: null,
   mobileGestureMoved: false,
+  mobileDrawerPointerId: null,
+  mobileDrawerStartY: 0,
+  mobileDrawerOffset: 0,
+  mobileDrawerDidSwipe: false,
   transform: null,
   currentRender: null,
   baseMapCache: null,
@@ -469,10 +474,67 @@ function isMobileLayout() {
 function setDrawerCollapsed(collapsed) {
   state.drawerCollapsed = collapsed;
   if (!mobileSheet || !mobileSheetToggle || !mobileSheetBody) return;
+  state.mobileDrawerOffset = 0;
+  mobileSheet.style.removeProperty("--mobile-sheet-offset");
+  mobileSheet.classList.remove("is-dragging");
   mobileSheet.classList.toggle("is-collapsed", collapsed);
   mobileSheet.setAttribute("aria-expanded", String(!collapsed));
   mobileSheetToggle.setAttribute("aria-expanded", String(!collapsed));
   mobileSheetBody.hidden = collapsed;
+}
+
+function beginMobileDrawerGesture(event) {
+  if (!state.isMobile || !mobileSheet) return;
+  if (event.pointerType === "mouse") return;
+  state.mobileDrawerPointerId = event.pointerId;
+  state.mobileDrawerStartY = event.clientY;
+  state.mobileDrawerOffset = 0;
+  state.mobileDrawerDidSwipe = false;
+  mobileSheet.classList.add("is-dragging");
+  mobileSheet.style.setProperty("--mobile-sheet-offset", "0px");
+  mobileSheetToggle?.setPointerCapture?.(event.pointerId);
+}
+
+function updateMobileDrawerGesture(event) {
+  if (!mobileSheet || state.mobileDrawerPointerId !== event.pointerId) return;
+  const deltaY = event.clientY - state.mobileDrawerStartY;
+  const offset = state.drawerCollapsed ? Math.min(0, deltaY) : Math.max(0, deltaY);
+  state.mobileDrawerOffset = offset;
+  mobileSheet.style.setProperty("--mobile-sheet-offset", `${offset}px`);
+}
+
+function endMobileDrawerGesture(event) {
+  if (state.mobileDrawerPointerId !== event.pointerId) return;
+  const offset = state.mobileDrawerOffset;
+  state.mobileDrawerDidSwipe = Math.abs(offset) >= 4;
+  state.mobileDrawerPointerId = null;
+  state.mobileDrawerStartY = 0;
+  state.mobileDrawerOffset = 0;
+  mobileSheet?.classList.remove("is-dragging");
+  mobileSheet?.style.removeProperty("--mobile-sheet-offset");
+  mobileSheetToggle?.releasePointerCapture?.(event.pointerId);
+
+  if (state.drawerCollapsed) {
+    if (offset <= -MOBILE_DRAWER_SWIPE_THRESHOLD_PX) {
+      setDrawerCollapsed(false);
+    }
+    return;
+  }
+
+  if (offset >= MOBILE_DRAWER_SWIPE_THRESHOLD_PX) {
+    setDrawerCollapsed(true);
+  }
+}
+
+function cancelMobileDrawerGesture(event) {
+  if (!mobileSheet || state.mobileDrawerPointerId !== event.pointerId) return;
+  state.mobileDrawerPointerId = null;
+  state.mobileDrawerStartY = 0;
+  state.mobileDrawerOffset = 0;
+  state.mobileDrawerDidSwipe = false;
+  mobileSheet.classList.remove("is-dragging");
+  mobileSheet.style.removeProperty("--mobile-sheet-offset");
+  mobileSheetToggle?.releasePointerCapture?.(event.pointerId);
 }
 
 function syncMobileHelp() {
@@ -2761,7 +2823,27 @@ async function init() {
   });
 
   mobileSheetToggle.addEventListener("click", () => {
+    if (state.mobileDrawerDidSwipe) {
+      state.mobileDrawerDidSwipe = false;
+      return;
+    }
     setDrawerCollapsed(!state.drawerCollapsed);
+  });
+
+  mobileSheetToggle.addEventListener("pointerdown", (event) => {
+    beginMobileDrawerGesture(event);
+  });
+
+  mobileSheetToggle.addEventListener("pointermove", (event) => {
+    updateMobileDrawerGesture(event);
+  });
+
+  mobileSheetToggle.addEventListener("pointerup", (event) => {
+    endMobileDrawerGesture(event);
+  });
+
+  mobileSheetToggle.addEventListener("pointercancel", (event) => {
+    cancelMobileDrawerGesture(event);
   });
 
   mobileInstructionsLocateButton.addEventListener("click", () => {
