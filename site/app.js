@@ -474,7 +474,7 @@ function currentZoomFocusPoint() {
 
 function activeViewportCenter() {
   if (state.viewportScale <= MIN_VIEWPORT_SCALE) return null;
-  return state.viewportCenter ? state.viewportCenter.slice() : currentZoomFocusPoint();
+  return currentZoomFocusPoint();
 }
 
 function buildTransform(bounds, width, height, padding = PANEL_PADDING, zoom = 1, centerPoint = null) {
@@ -1364,8 +1364,14 @@ function drawMap(drawCtx, width, height) {
   const warpPoint = state.showWarp && warp ? warp.warpPoint : (point) => point;
   const inverseWarpPoint = warp ? warp.inverseWarpPoint : (point) => point;
   const warpedBounds = state.showWarp && warp ? warp.warpedBounds : state.data.meta.bounds;
-  const anchorScreen = state.showWarp && state.pinned && !state.isMobile ? state.pinnedScreen : null;
-  const anchoredOrigin = baseTransform.toScreen(warpPoint(state.originPoint));
+  const zoomFocusPoint = state.viewportScale > MIN_VIEWPORT_SCALE ? currentZoomFocusPoint() : null;
+  const anchorScreen = zoomFocusPoint
+    ? [width / 2, height / 2]
+    : state.showWarp && state.pinned && !state.isMobile
+      ? state.pinnedScreen
+      : null;
+  const anchorWorldPoint = zoomFocusPoint || state.originPoint;
+  const anchoredOrigin = baseTransform.toScreen(warpPoint(anchorWorldPoint));
   const [warpMinX, warpMinY, warpMaxX, warpMaxY] = warpedBounds;
   const topLeft = baseTransform.toScreen([warpMinX, warpMaxY]);
   const bottomRight = baseTransform.toScreen([warpMaxX, warpMinY]);
@@ -1379,8 +1385,8 @@ function drawMap(drawCtx, width, height) {
   const maxDx = width - PANEL_PADDING - rightBound;
   const minDy = PANEL_PADDING - topBound;
   const maxDy = height - PANEL_PADDING - bottomBound;
-  const dx = clampToRange(desiredDx, minDx, maxDx);
-  const dy = clampToRange(desiredDy, minDy, maxDy);
+  const dx = zoomFocusPoint ? desiredDx : clampToRange(desiredDx, minDx, maxDx);
+  const dy = zoomFocusPoint ? desiredDy : clampToRange(desiredDy, minDy, maxDy);
   const transform = offsetTransform(baseTransform, dx, dy);
   const projectPoint = (point) => transform.toScreen(warpPoint(point));
   const externalLandProjectPoint = (point) => transform.toScreen(point);
