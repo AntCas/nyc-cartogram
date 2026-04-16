@@ -31,6 +31,15 @@ const WARP_LINE_MAX_SUBDIVISION_DEPTH = 7;
 const SWIM_METERS_PER_MINUTE = 28;
 const REACHABILITY_THRESHOLD_MINUTES = 60;
 const SHARE_COORDINATE_DECIMALS = 5;
+const EMOJI_BURST_INTERVAL_MS = 90;
+const EMOJI_BURST_PER_TICK = 3;
+const EMOJI_BURST_LIFETIME_MS = 900;
+
+const EMOJI_BURST_SETS = {
+  twitter: ["🐦", "🕊️", "🐥", "🪽"],
+  linkedin: ["💼", "📈", "🤝", "🧠", "📊"],
+  coffee: ["☕", "🥤", "🧋", "🍵"],
+};
 
 const state = {
   data: null,
@@ -116,6 +125,16 @@ const mobileInstructionsLocateButton = document.getElementById("mobileInstructio
 const mobileHelpBubble = document.getElementById("mobileHelpBubble");
 const ctx = mapCanvas.getContext("2d");
 const panelCard = document.querySelector(".panel-card");
+const footerEmojiLinks = Array.from(document.querySelectorAll("[data-emoji-burst]"));
+
+const emojiBurstState = {
+  mediaQuery: null,
+  layer: null,
+  activeLink: null,
+  pointerX: 0,
+  pointerY: 0,
+  intervalId: null,
+};
 
 const searchUis = [
   {
@@ -141,6 +160,133 @@ shareLinkedInIcon.src = new URL("./LinkedIn.png", import.meta.url).toString();
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
+}
+
+function canShowEmojiBursts() {
+  if (!emojiBurstState.mediaQuery) {
+    emojiBurstState.mediaQuery = window.matchMedia("(hover: hover) and (pointer: fine) and (min-width: 641px)");
+  }
+  return emojiBurstState.mediaQuery.matches;
+}
+
+function ensureEmojiBurstLayer() {
+  if (emojiBurstState.layer) return emojiBurstState.layer;
+  const layer = document.createElement("div");
+  layer.className = "emoji-burst-layer";
+  document.body.appendChild(layer);
+  emojiBurstState.layer = layer;
+  return layer;
+}
+
+function stopEmojiBurstLoop() {
+  if (emojiBurstState.intervalId !== null) {
+    window.clearInterval(emojiBurstState.intervalId);
+    emojiBurstState.intervalId = null;
+  }
+  emojiBurstState.activeLink = null;
+}
+
+function emitEmojiBurst(link, originX, originY) {
+  const theme = link.dataset.emojiBurst;
+  const emojis = EMOJI_BURST_SETS[theme];
+  if (!emojis?.length) return;
+
+  const layer = ensureEmojiBurstLayer();
+  const originJitter = 10;
+
+  for (let index = 0; index < EMOJI_BURST_PER_TICK; index += 1) {
+    const particle = document.createElement("span");
+    particle.className = "emoji-burst";
+    particle.textContent = emojis[Math.floor(Math.random() * emojis.length)];
+
+    const burstX = originX + (Math.random() - 0.5) * originJitter * 2;
+    const burstY = originY + (Math.random() - 0.5) * originJitter * 2;
+    const burstDx = (Math.random() - 0.5) * 54;
+    const burstDy = -36 - Math.random() * 72;
+    const rotation = `${(Math.random() - 0.5) * 44}deg`;
+    const size = `${0.9 + Math.random() * 0.5}rem`;
+
+    particle.style.setProperty("--burst-x", `${Math.round(burstX)}px`);
+    particle.style.setProperty("--burst-y", `${Math.round(burstY)}px`);
+    particle.style.setProperty("--burst-dx", `${Math.round(burstDx)}px`);
+    particle.style.setProperty("--burst-dy", `${Math.round(burstDy)}px`);
+    particle.style.setProperty("--burst-rotate", rotation);
+    particle.style.fontSize = size;
+
+    layer.appendChild(particle);
+    window.setTimeout(() => {
+      particle.remove();
+    }, EMOJI_BURST_LIFETIME_MS);
+  }
+}
+
+function updateEmojiBurstPointer(event, link) {
+  emojiBurstState.pointerX = event.clientX;
+  emojiBurstState.pointerY = event.clientY;
+
+  if (!canShowEmojiBursts()) {
+    stopEmojiBurstLoop();
+    return;
+  }
+
+  emojiBurstState.activeLink = link;
+}
+
+function startEmojiBurstLoop(link, event) {
+  if (!canShowEmojiBursts()) return;
+
+  updateEmojiBurstPointer(event, link);
+  emitEmojiBurst(link, emojiBurstState.pointerX, emojiBurstState.pointerY);
+  stopEmojiBurstLoop();
+  emojiBurstState.activeLink = link;
+  emojiBurstState.intervalId = window.setInterval(() => {
+    if (!emojiBurstState.activeLink || !canShowEmojiBursts()) {
+      stopEmojiBurstLoop();
+      return;
+    }
+    emitEmojiBurst(
+      emojiBurstState.activeLink,
+      emojiBurstState.pointerX,
+      emojiBurstState.pointerY,
+    );
+  }, EMOJI_BURST_INTERVAL_MS);
+}
+
+function setupFooterEmojiBursts() {
+  if (!footerEmojiLinks.length) return;
+
+  for (const link of footerEmojiLinks) {
+    link.addEventListener("pointerenter", (event) => {
+      if (!(event.pointerType === "mouse" || event.pointerType === "")) return;
+      startEmojiBurstLoop(link, event);
+    });
+
+    link.addEventListener("pointermove", (event) => {
+      if (emojiBurstState.activeLink !== link) return;
+      updateEmojiBurstPointer(event, link);
+    });
+
+    link.addEventListener("pointerleave", () => {
+      if (emojiBurstState.activeLink === link) {
+        stopEmojiBurstLoop();
+      }
+    });
+
+    link.addEventListener("blur", () => {
+      if (emojiBurstState.activeLink === link) {
+        stopEmojiBurstLoop();
+      }
+    });
+  }
+
+  if (!emojiBurstState.mediaQuery) {
+    emojiBurstState.mediaQuery = window.matchMedia("(hover: hover) and (pointer: fine) and (min-width: 641px)");
+  }
+  emojiBurstState.mediaQuery.addEventListener("change", () => {
+    if (!emojiBurstState.mediaQuery.matches) {
+      stopEmojiBurstLoop();
+    }
+  });
 }
 
 function clampToRange(value, min, max) {
@@ -2628,6 +2774,7 @@ async function init() {
     expandMobileHelp();
   });
 
+  setupFooterEmojiBursts();
   syncFullscreenButton();
   syncMobileSheet();
   syncMobileHelp();
