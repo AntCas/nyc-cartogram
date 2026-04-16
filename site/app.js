@@ -8,6 +8,8 @@ const ROUTE_LINE_WIDTH = 2.2;
 const WEIGHT_BLUR_PASSES = 2;
 const WEIGHT_BLUR_RADIUS = 2;
 const HOVER_DEADBAND = 14;
+const MOBILE_PIN_TAP_SLOP = 10;
+const MOBILE_PIN_HIT_RADIUS = 26;
 const HEATMAP_RESOLUTION_SCALE = 2;
 const HEATMAP_BLUR_PX = 7;
 const HEATMAP_ALPHA = 0.8;
@@ -31,6 +33,9 @@ const state = {
   showWarp: true,
   showHeatmap: true,
   showPinHint: true,
+  isMobile: false,
+  drawerCollapsed: false,
+  mobileHelpCollapsed: false,
   cursorPoint: null,
   cursorScreen: null,
   originPoint: null,
@@ -38,6 +43,12 @@ const state = {
   pinnedPoint: null,
   pinnedScreen: null,
   pinned: false,
+  probePoint: null,
+  probePinned: false,
+  mobilePointerId: null,
+  mobileDragTarget: null,
+  mobileGestureStartScreen: null,
+  mobileGestureMoved: false,
   transform: null,
   currentRender: null,
   baseMapCache: null,
@@ -73,8 +84,46 @@ const searchResults = document.getElementById("searchResults");
 const reachScoreCard = document.getElementById("reachScoreCard");
 const reachScoreValue = document.getElementById("reachScoreValue");
 const reachScoreMeta = document.getElementById("reachScoreMeta");
+const mobileOriginTitle = document.getElementById("mobileOriginTitle");
+const mobileStatusText = document.getElementById("mobileStatusText");
+const mobileClearButton = document.getElementById("mobileClearButton");
+const mobileSheet = document.getElementById("mobileSheet");
+const mobileSheetToggle = document.getElementById("mobileSheetToggle");
+const mobileSheetBody = document.getElementById("mobileSheetBody");
+const mobileReachValue = document.getElementById("mobileReachValue");
+const mobileReachMeta = document.getElementById("mobileReachMeta");
+const mobileWarpToggle = document.getElementById("mobileWarpToggle");
+const mobileHeatmapToggle = document.getElementById("mobileHeatmapToggle");
+const mobileSearchForm = document.getElementById("mobileSearchForm");
+const mobileAddressInput = document.getElementById("mobileAddressInput");
+const mobileSearchButton = document.getElementById("mobileSearchButton");
+const mobileSearchMeta = document.getElementById("mobileSearchMeta");
+const mobileSearchResults = document.getElementById("mobileSearchResults");
+const mobileLocateButton = document.getElementById("mobileLocateButton");
+const mobileShareButton = document.getElementById("mobileShareButton");
+const mobileMapHelp = document.getElementById("mobileMapHelp");
+const mobileMapInstructions = document.getElementById("mobileMapInstructions");
+const mobileInstructionsLocateButton = document.getElementById("mobileInstructionsLocateButton");
+const mobileHelpBubble = document.getElementById("mobileHelpBubble");
 const ctx = mapCanvas.getContext("2d");
 const panelCard = document.querySelector(".panel-card");
+
+const searchUis = [
+  {
+    form: searchForm,
+    input: addressInput,
+    button: searchButton,
+    meta: searchMeta,
+    results: searchResults,
+  },
+  {
+    form: mobileSearchForm,
+    input: mobileAddressInput,
+    button: mobileSearchButton,
+    meta: mobileSearchMeta,
+    results: mobileSearchResults,
+  },
+];
 
 shareXIcon.src = new URL("./x.png", import.meta.url).toString();
 shareFacebookIcon.src = new URL("./Facebook.png", import.meta.url).toString();
@@ -250,6 +299,40 @@ function formatShareTime(date = new Date()) {
     hour: "numeric",
     minute: "2-digit",
   });
+}
+
+function isMobileLayout() {
+  return window.matchMedia("(max-width: 640px)").matches;
+}
+
+function setDrawerCollapsed(collapsed) {
+  state.drawerCollapsed = collapsed;
+  if (!mobileSheet || !mobileSheetToggle || !mobileSheetBody) return;
+  mobileSheet.classList.toggle("is-collapsed", collapsed);
+  mobileSheet.setAttribute("aria-expanded", String(!collapsed));
+  mobileSheetToggle.setAttribute("aria-expanded", String(!collapsed));
+  mobileSheetBody.hidden = collapsed;
+}
+
+function syncMobileHelp() {
+  if (!mobileMapHelp || !mobileMapInstructions || !mobileHelpBubble) return;
+  const collapsed = state.isMobile && state.mobileHelpCollapsed;
+  mobileMapHelp.classList.toggle("is-collapsed", collapsed);
+  mobileMapInstructions.setAttribute("aria-hidden", String(collapsed));
+  mobileHelpBubble.hidden = !collapsed;
+  mobileHelpBubble.setAttribute("aria-expanded", String(!collapsed));
+}
+
+function collapseMobileHelp() {
+  if (!state.isMobile || state.mobileHelpCollapsed) return;
+  state.mobileHelpCollapsed = true;
+  syncMobileHelp();
+}
+
+function expandMobileHelp() {
+  if (!state.isMobile) return;
+  state.mobileHelpCollapsed = false;
+  syncMobileHelp();
 }
 
 function worldToLonLat(point) {
@@ -855,6 +938,10 @@ function syncReachabilityScore(summary = null) {
     reachScoreCard.hidden = true;
     reachScoreValue.textContent = "-- / --";
     reachScoreMeta.textContent = "Choose an origin to see how much of the subway you can reach in an hour.";
+    if (mobileReachValue && mobileReachMeta) {
+      mobileReachValue.textContent = "-- / --";
+      mobileReachMeta.textContent = "Choose an origin to see how much of the subway you can reach in an hour.";
+    }
     return;
   }
 
@@ -862,6 +949,10 @@ function syncReachabilityScore(summary = null) {
   const percent = Math.round(summary.ratio * 100);
   reachScoreValue.textContent = `${summary.reachableStations} / ${summary.totalStations}`;
   reachScoreMeta.textContent = `${percent}% of stations are reachable within ${REACHABILITY_THRESHOLD_MINUTES} minutes.`;
+  if (mobileReachValue && mobileReachMeta) {
+    mobileReachValue.textContent = `${summary.reachableStations} / ${summary.totalStations}`;
+    mobileReachMeta.textContent = `${percent}% of stations are reachable within ${REACHABILITY_THRESHOLD_MINUTES} minutes.`;
+  }
 }
 
 function computeWarp(origin) {
@@ -1205,7 +1296,18 @@ function drawMap(drawCtx, width, height) {
     drawStations(drawCtx, projectPoint);
     drawBoroughLabels(drawCtx, projectPoint);
 
-    statusText.textContent = "Hover to preview an origin, then click to pin it.";
+    if (state.cursorScreen) {
+      drawMarker(drawCtx, state.cursorScreen, "#d75c2e", 24, 5.5);
+      if (!state.isMobile && state.showPinHint) {
+        drawHoverTooltip(drawCtx, state.cursorScreen, "Click to pin");
+      }
+    }
+
+    statusText.textContent = state.isMobile
+      ? state.cursorScreen
+        ? "Release to pin the origin."
+        : "Drag on the map to preview an origin."
+      : "Hover to preview an origin, then click to pin it.";
     state.currentRender = {
       warp: {
         inverseWarpPoint: (point) => point,
@@ -1215,8 +1317,10 @@ function drawMap(drawCtx, width, height) {
       },
       transform: state.transform,
       anchorOffset: [0, 0],
+      projectPoint,
     };
     syncReachabilityScore();
+    syncMobileSheet();
     return;
   }
 
@@ -1226,7 +1330,7 @@ function drawMap(drawCtx, width, height) {
   const warpPoint = state.showWarp && warp ? warp.warpPoint : (point) => point;
   const inverseWarpPoint = warp ? warp.inverseWarpPoint : (point) => point;
   const warpedBounds = state.showWarp && warp ? warp.warpedBounds : state.data.meta.bounds;
-  const anchorScreen = state.showWarp && state.pinned ? state.pinnedScreen : null;
+  const anchorScreen = state.showWarp && state.pinned && !state.isMobile ? state.pinnedScreen : null;
   const anchoredOrigin = baseTransform.toScreen(warpPoint(state.originPoint));
   const [warpMinX, warpMinY, warpMaxX, warpMaxY] = warpedBounds;
   const topLeft = baseTransform.toScreen([warpMinX, warpMaxY]);
@@ -1263,6 +1367,7 @@ function drawMap(drawCtx, width, height) {
     },
     transform,
     anchorOffset: [dx, dy],
+    projectPoint,
   };
   syncReachabilityScore(warp?.reachability ?? null);
 
@@ -1280,23 +1385,29 @@ function drawMap(drawCtx, width, height) {
   drawStations(drawCtx, projectPoint);
   drawBoroughLabels(drawCtx, projectPoint);
 
-  if (state.pinned) {
+  if (state.originPoint) {
     drawMarker(drawCtx, projectPoint(state.originPoint), "#d75c2e", 24, 5.5);
   } else if (state.cursorScreen) {
     drawMarker(drawCtx, state.cursorScreen, "#d75c2e", 24, 5.5);
   }
 
-  if (state.pinned && state.cursorScreen) {
+  if (state.probePoint) {
+    drawMarker(drawCtx, projectPoint(state.probePoint), "#17304d", 18, 4.3, 0.18);
+  } else if (state.pinned && state.cursorScreen) {
     drawMarker(drawCtx, state.cursorScreen, "#17304d", 18, 4.3, 0.18);
   }
 
   const nearest = warp?.seeds?.[0] ?? null;
   const station = nearest ? state.data.stations[nearest.index] : null;
-  if (state.pinned && state.cursorPoint) {
+  const activeProbePoint = state.isMobile ? state.probePoint : state.cursorPoint;
+  const activeProbeScreen = state.isMobile
+    ? (state.probePoint ? projectPoint(state.probePoint) : null)
+    : state.cursorScreen;
+  if (state.originPoint && activeProbePoint) {
     const probe = warp
-      ? estimateTravel(normalizedOrigin, warp.distances, state.cursorPoint)
+      ? estimateTravel(normalizedOrigin, warp.distances, activeProbePoint)
       : (() => {
-          const destination = normalizeTravelPoint(state.cursorPoint);
+          const destination = normalizeTravelPoint(activeProbePoint);
           const swimMinutes = normalizedOrigin.swimMinutes + destination.swimMinutes;
           const minutes =
             distance(normalizedOrigin.point, destination.point) / state.data.meta.walkMetersPerMinute +
@@ -1309,8 +1420,8 @@ function drawMap(drawCtx, width, height) {
           };
         })();
     statusText.textContent = station ? `Pinned near ${station.name}` : "Pinned origin";
-    if (state.cursorScreen) {
-      drawHoverTooltip(drawCtx, state.cursorScreen, `${formatTravelBreakdown(probe.baseMinutes, probe.swimMinutes)} away`);
+    if (activeProbeScreen) {
+      drawHoverTooltip(drawCtx, activeProbeScreen, `${formatTravelBreakdown(probe.baseMinutes, probe.swimMinutes)} away`);
     }
   } else {
     statusText.textContent = station
@@ -1318,10 +1429,11 @@ function drawMap(drawCtx, width, height) {
       : state.showWarp
         ? "Warped commute-time view"
         : "Geographic commute-time view";
-    if (state.showPinHint && state.cursorScreen) {
+    if (!state.isMobile && state.showPinHint && state.cursorScreen) {
       drawHoverTooltip(drawCtx, state.cursorScreen, "Click to pin");
     }
   }
+  syncMobileSheet();
 }
 
 function drawMarker(drawCtx, screenPoint, color, glowRadius, radius, glowAlpha = 0.5) {
@@ -1546,6 +1658,25 @@ function closeSharePanel() {
   shareButton.setAttribute("aria-expanded", "false");
 }
 
+function setSearchMetaText(text) {
+  for (const ui of searchUis) {
+    ui.meta.textContent = text;
+  }
+}
+
+function setSearchBusy(isBusy) {
+  for (const ui of searchUis) {
+    ui.button.disabled = isBusy;
+    ui.button.textContent = isBusy ? "Searching" : "Search";
+  }
+}
+
+function setAddressInputs(value) {
+  for (const ui of searchUis) {
+    ui.input.value = value;
+  }
+}
+
 function openSharePanel() {
   const shareUrl = getShareUrl();
   const shareTitle = document.title;
@@ -1579,10 +1710,13 @@ function requestDraw() {
 }
 
 function resize() {
+  state.isMobile = isMobileLayout();
   const size = createCanvasBacking(mapCanvas);
   state.transform = buildTransform(state.data.meta.bounds, size.width, size.height);
   state.baseMapCache = null;
   state.dirty = true;
+  syncMobileSheet();
+  syncMobileHelp();
   requestDraw();
 }
 
@@ -1599,6 +1733,145 @@ function pointerToWorld(event) {
   const warpedWorld = state.currentRender.transform.toWorld(x, y);
   const worldPoint = state.currentRender.warp.inverseWarpPoint(warpedWorld);
   return { screenPoint, worldPoint };
+}
+
+function screenDistance(a, b) {
+  return Math.hypot(a[0] - b[0], a[1] - b[1]);
+}
+
+function currentProjectedPinPositions() {
+  if (!state.currentRender?.projectPoint) {
+    return { originScreen: null, probeScreen: null };
+  }
+  const originScreen = state.originPoint ? state.currentRender.projectPoint(state.originPoint) : null;
+  const probeScreen = state.probePoint ? state.currentRender.projectPoint(state.probePoint) : null;
+  return { originScreen, probeScreen };
+}
+
+function hitMobilePinTarget(screenPoint) {
+  const { originScreen, probeScreen } = currentProjectedPinPositions();
+  if (probeScreen && screenDistance(screenPoint, probeScreen) <= MOBILE_PIN_HIT_RADIUS) {
+    return "probe";
+  }
+  if (originScreen && screenDistance(screenPoint, originScreen) <= MOBILE_PIN_HIT_RADIUS) {
+    return "origin";
+  }
+  return null;
+}
+
+function setProbePoint(worldPoint) {
+  state.probePoint = worldPoint;
+  state.probePinned = Boolean(worldPoint);
+}
+
+function clearProbePoint() {
+  state.probePoint = null;
+  state.probePinned = false;
+}
+
+function handleMobilePointerDown(event) {
+  if (!state.isMobile) return;
+  closeSharePanel();
+  collapseMobileHelp();
+  const { screenPoint, worldPoint } = pointerToWorld(event);
+  if (!withinBounds(worldPoint)) return;
+  state.mobilePointerId = event.pointerId;
+  state.mobileGestureStartScreen = screenPoint;
+  state.mobileGestureMoved = false;
+  state.mobileDragTarget = hitMobilePinTarget(screenPoint) || (!state.originPoint ? "new-origin" : "new-probe");
+
+  if (state.mobileDragTarget === "origin" || state.mobileDragTarget === "new-origin") {
+    state.originLabel = null;
+    state.originPoint = worldPoint;
+    state.pinned = state.mobileDragTarget === "origin" ? true : false;
+    if (state.mobileDragTarget === "new-origin") {
+      clearProbePoint();
+    }
+  } else if (state.mobileDragTarget === "probe" || state.mobileDragTarget === "new-probe") {
+    setProbePoint(worldPoint);
+  }
+
+  state.cursorScreen = screenPoint;
+  state.cursorPoint = worldPoint;
+  state.showPinHint = false;
+  state.dirty = true;
+  mapCanvas.setPointerCapture(event.pointerId);
+  requestDraw();
+}
+
+function handleMobilePointerMove(event) {
+  if (!state.isMobile || state.mobilePointerId !== event.pointerId || !state.mobileDragTarget) return;
+  const { screenPoint, worldPoint } = pointerToWorld(event);
+  if (!withinBounds(worldPoint)) return;
+  state.mobileGestureMoved =
+    state.mobileGestureMoved ||
+    screenDistance(state.mobileGestureStartScreen || screenPoint, screenPoint) > MOBILE_PIN_TAP_SLOP;
+  state.cursorScreen = screenPoint;
+  state.cursorPoint = worldPoint;
+
+  if (state.mobileDragTarget === "origin" || state.mobileDragTarget === "new-origin") {
+    state.originLabel = null;
+    state.originPoint = worldPoint;
+  } else if (state.mobileDragTarget === "probe" || state.mobileDragTarget === "new-probe") {
+    setProbePoint(worldPoint);
+  }
+
+  state.dirty = true;
+  requestDraw();
+}
+
+function resetMobileGestureState() {
+  state.mobilePointerId = null;
+  state.mobileDragTarget = null;
+  state.mobileGestureStartScreen = null;
+  state.mobileGestureMoved = false;
+}
+
+function handleMobilePointerUp(event) {
+  if (!state.isMobile || state.mobilePointerId !== event.pointerId || !state.mobileDragTarget) return;
+
+  const dragTarget = state.mobileDragTarget;
+  const moved = state.mobileGestureMoved;
+
+  if (dragTarget === "origin" && !moved) {
+    clearPinnedOrigin();
+  } else if (dragTarget === "probe" && !moved) {
+    clearProbePoint();
+    state.dirty = true;
+    requestDraw();
+  } else {
+    if (dragTarget === "origin" || dragTarget === "new-origin") {
+      state.pinned = true;
+      state.pinnedPoint = state.originPoint ? state.originPoint.slice() : null;
+      state.pinnedScreen = state.cursorScreen ? state.cursorScreen.slice() : null;
+      if (state.originPoint) {
+        replaceBrowserUrl(getCoordinateUrlFragment(state.originPoint));
+      }
+    } else if (dragTarget === "probe" || dragTarget === "new-probe") {
+      state.probePinned = true;
+    }
+    state.dirty = true;
+    syncMobileSheet();
+    requestDraw();
+  }
+
+  state.cursorScreen = null;
+  state.cursorPoint = null;
+  try {
+    mapCanvas.releasePointerCapture(event.pointerId);
+  } catch (error) {
+    console.error(error);
+  }
+  resetMobileGestureState();
+}
+
+function handleMobilePointerCancel(event) {
+  if (!state.isMobile || state.mobilePointerId !== event.pointerId) return;
+  state.cursorScreen = null;
+  state.cursorPoint = null;
+  resetMobileGestureState();
+  state.dirty = true;
+  requestDraw();
 }
 
 function withinBounds(point) {
@@ -1621,7 +1894,9 @@ function syncFullscreenButton() {
 }
 
 function clearSearchResults() {
-  searchResults.innerHTML = "";
+  for (const ui of searchUis) {
+    ui.results.innerHTML = "";
+  }
 }
 
 function setPinnedOrigin(worldPoint) {
@@ -1632,17 +1907,56 @@ function setPinnedOrigin(worldPoint) {
   state.cursorPoint = worldPoint;
   replaceBrowserUrl(getCoordinateUrlFragment(worldPoint));
   state.dirty = true;
+  syncMobileSheet();
   requestDraw();
+}
+
+function clearPinnedOrigin() {
+  state.pinned = false;
+  state.pinnedPoint = null;
+  state.pinnedScreen = null;
+  clearProbePoint();
+  state.cursorScreen = null;
+  state.cursorPoint = null;
+  state.originPoint = null;
+  state.originLabel = null;
+  replaceBrowserUrl();
+  state.dirty = true;
+  syncMobileSheet();
+  requestDraw();
+}
+
+function syncMobileSheet() {
+  if (!mobileOriginTitle || !mobileStatusText || !mobileClearButton) return;
+
+  const nearestSeed = state.currentRender?.warp?.seeds?.[0] ?? null;
+  const nearestStation = nearestSeed ? state.data?.stations?.[nearestSeed.index] : null;
+
+  if (!state.pinned || !state.originPoint) {
+    mobileOriginTitle.textContent = state.cursorScreen ? "Release to pin the origin" : "Drag to preview an origin";
+    mobileStatusText.textContent =
+      "Touch and drag on the map to preview your starting point. Release to pin it, then drag again to measure commute times elsewhere.";
+    mobileClearButton.hidden = true;
+    return;
+  }
+
+  mobileOriginTitle.textContent = state.originLabel || (nearestStation ? `Pinned near ${nearestStation.name}` : "Pinned origin");
+  mobileStatusText.textContent = state.probePoint
+    ? "Drag either pin to reposition it. Tap a pin without dragging to remove it."
+    : nearestStation
+      ? `Commute times are anchored near ${nearestStation.name}. Drag on the map to place a "distance to here" pin.`
+      : 'Commute times are anchored to this origin. Drag on the map to place a "distance to here" pin.';
+  mobileClearButton.hidden = false;
 }
 
 function renderSearchResults(results) {
   clearSearchResults();
   if (!results.length) {
-    searchMeta.textContent = "No NYC address matches found.";
+    setSearchMetaText("No NYC address matches found.");
     return;
   }
-  searchMeta.textContent = "Choose a result to pin the origin there.";
-  searchResults.innerHTML = results
+  setSearchMetaText("Choose a result to pin the origin there.");
+  const markup = results
     .map(
       (result, index) => `
         <button class="search-result" type="button" data-result-index="${index}">
@@ -1653,20 +1967,23 @@ function renderSearchResults(results) {
     )
     .join("");
 
-  for (const button of searchResults.querySelectorAll(".search-result")) {
-    button.addEventListener("click", () => {
-      const result = results[Number(button.dataset.resultIndex)];
-      const worldPoint = lonLatToWorld(result.lon, result.lat);
-      if (!withinBounds(worldPoint)) {
-        searchMeta.textContent = "That result fell outside the current NYC map bounds.";
-        return;
-      }
-      addressInput.value = result.title;
-      searchMeta.textContent = `Pinned origin to ${result.title}.`;
-      clearSearchResults();
-      state.originLabel = result.title;
-      setPinnedOrigin(worldPoint);
-    });
+  for (const ui of searchUis) {
+    ui.results.innerHTML = markup;
+    for (const button of ui.results.querySelectorAll(".search-result")) {
+      button.addEventListener("click", () => {
+        const result = results[Number(button.dataset.resultIndex)];
+        const worldPoint = lonLatToWorld(result.lon, result.lat);
+        if (!withinBounds(worldPoint)) {
+          setSearchMetaText("That result fell outside the current NYC map bounds.");
+          return;
+        }
+        setAddressInputs(result.title);
+        setSearchMetaText(`Pinned origin to ${result.title}.`);
+        clearSearchResults();
+        state.originLabel = result.title;
+        setPinnedOrigin(worldPoint);
+      });
+    }
   }
 }
 
@@ -1703,9 +2020,51 @@ async function searchAddress(query) {
   }));
 }
 
+function setLocateButtonsBusy(isBusy) {
+  const label = isBusy ? "Locating…" : "Use My Location";
+  for (const button of [mobileLocateButton, mobileInstructionsLocateButton]) {
+    if (!button) continue;
+    button.disabled = isBusy;
+    button.textContent = label;
+  }
+}
+
+function useCurrentLocation() {
+  if (!navigator.geolocation) {
+    setSearchMetaText("Location access is not available on this device.");
+    return;
+  }
+
+  setLocateButtonsBusy(true);
+  navigator.geolocation.getCurrentPosition(
+    (position) => {
+      setLocateButtonsBusy(false);
+      const worldPoint = lonLatToWorld(position.coords.longitude, position.coords.latitude);
+      if (!withinBounds(worldPoint)) {
+        setSearchMetaText("That location falls outside the current NYC map bounds.");
+        return;
+      }
+      state.originLabel = "My location";
+      setPinnedOrigin(worldPoint);
+      setSearchMetaText("Pinned origin to your current location.");
+    },
+    (error) => {
+      console.error(error);
+      setLocateButtonsBusy(false);
+      setSearchMetaText("Could not access your location. Check permissions and try again.");
+    },
+    {
+      enableHighAccuracy: true,
+      timeout: 10000,
+      maximumAge: 300000,
+    },
+  );
+}
+
 async function init() {
   const response = await fetch(DATA_URL);
   state.data = await response.json();
+  state.isMobile = isMobileLayout();
   state.baseMapCache = null;
   state.ready = true;
   warpToggle.checked = state.showWarp;
@@ -1730,7 +2089,20 @@ async function init() {
   resize();
   window.addEventListener("resize", resize);
 
+  mobileWarpToggle.checked = state.showWarp;
+  mobileHeatmapToggle.checked = state.showHeatmap;
+
+  mapCanvas.addEventListener("pointerdown", (event) => {
+    if (!state.isMobile) return;
+    event.preventDefault();
+    handleMobilePointerDown(event);
+  });
+
   mapCanvas.addEventListener("pointermove", (event) => {
+    if (state.isMobile) {
+      handleMobilePointerMove(event);
+      return;
+    }
     const { screenPoint, worldPoint } = pointerToWorld(event);
     if (!withinBounds(worldPoint)) return;
     state.cursorScreen = screenPoint;
@@ -1743,9 +2115,21 @@ async function init() {
     requestDraw();
   });
 
+  mapCanvas.addEventListener("pointerup", (event) => {
+    if (!state.isMobile) return;
+    event.preventDefault();
+    handleMobilePointerUp(event);
+  });
+
+  mapCanvas.addEventListener("pointercancel", (event) => {
+    if (!state.isMobile) return;
+    handleMobilePointerCancel(event);
+  });
+
   mapCanvas.addEventListener("click", (event) => {
     closeSharePanel();
-    const hovered = state.cursorScreen && state.cursorPoint;
+    if (state.isMobile) return;
+    const hovered = !state.isMobile && state.cursorScreen && state.cursorPoint;
     const { screenPoint, worldPoint } = hovered
       ? { screenPoint: state.cursorScreen.slice(), worldPoint: state.cursorPoint.slice() }
       : pointerToWorld(event);
@@ -1753,6 +2137,7 @@ async function init() {
     state.cursorScreen = screenPoint;
     state.cursorPoint = worldPoint;
     state.showPinHint = false;
+
     if (!state.pinned) {
       state.originPoint = worldPoint;
       state.originLabel = null;
@@ -1769,11 +2154,13 @@ async function init() {
       replaceBrowserUrl();
     }
     state.dirty = true;
+    syncMobileSheet();
     requestDraw();
   });
 
   mapCanvas.addEventListener("pointerleave", () => {
     closeSharePanel();
+    if (state.isMobile) return;
     state.cursorScreen = null;
     if (!state.pinned) {
       state.cursorPoint = null;
@@ -1787,6 +2174,7 @@ async function init() {
   heatmapToggle.addEventListener("change", () => {
     closeSharePanel();
     state.showHeatmap = heatmapToggle.checked;
+    mobileHeatmapToggle.checked = state.showHeatmap;
     syncHeatmapLegend();
     state.dirty = true;
     requestDraw();
@@ -1795,6 +2183,22 @@ async function init() {
   warpToggle.addEventListener("change", () => {
     closeSharePanel();
     state.showWarp = warpToggle.checked;
+    mobileWarpToggle.checked = state.showWarp;
+    state.dirty = true;
+    requestDraw();
+  });
+
+  mobileHeatmapToggle.addEventListener("change", () => {
+    state.showHeatmap = mobileHeatmapToggle.checked;
+    heatmapToggle.checked = state.showHeatmap;
+    syncHeatmapLegend();
+    state.dirty = true;
+    requestDraw();
+  });
+
+  mobileWarpToggle.addEventListener("change", () => {
+    state.showWarp = mobileWarpToggle.checked;
+    warpToggle.checked = state.showWarp;
     state.dirty = true;
     requestDraw();
   });
@@ -1836,7 +2240,7 @@ async function init() {
     } catch (error) {
       if (error?.name !== "AbortError") {
         console.error(error);
-        searchMeta.textContent = "Could not open the share sheet. Try another option.";
+        setSearchMetaText("Could not open the share sheet. Try another option.");
       }
     }
   });
@@ -1845,7 +2249,7 @@ async function init() {
     closeSharePanel();
     downloadShareImage().catch((error) => {
       console.error(error);
-      searchMeta.textContent = "Could not save the image. Try again.";
+      setSearchMetaText("Could not save the image. Try again.");
       shareButton.disabled = false;
     });
   });
@@ -1855,10 +2259,10 @@ async function init() {
     try {
       await navigator.clipboard.writeText(getShareUrl());
       await downloadShareImage();
-      searchMeta.textContent = "Image downloaded and link copied for Instagram.";
+      setSearchMetaText("Image downloaded and link copied for Instagram.");
     } catch (error) {
       console.error(error);
-      searchMeta.textContent = "Could not prep the Instagram share. Try again.";
+      setSearchMetaText("Could not prep the Instagram share. Try again.");
       shareButton.disabled = false;
     }
   });
@@ -1881,33 +2285,84 @@ async function init() {
     }
   });
 
-  searchForm.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const query = addressInput.value.trim();
-    if (!query) {
-      searchMeta.textContent = "Enter an NYC address to search.";
+  for (const ui of searchUis) {
+    ui.form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const query = ui.input.value.trim();
+      if (!query) {
+        setSearchMetaText("Enter an NYC address to search.");
+        clearSearchResults();
+        return;
+      }
+
+      setSearchBusy(true);
+      setSearchMetaText("Looking up NYC address matches…");
       clearSearchResults();
+
+      try {
+        const results = await searchAddress(query);
+        renderSearchResults(results);
+      } catch (error) {
+        console.error(error);
+        setSearchMetaText("Address lookup failed. Try a more specific NYC address.");
+      } finally {
+        setSearchBusy(false);
+      }
+    });
+  }
+
+  mobileClearButton.addEventListener("click", () => {
+    clearPinnedOrigin();
+    setSearchMetaText("Origin cleared. Tap the map or search for a new starting point.");
+  });
+
+  mobileLocateButton.addEventListener("click", () => {
+    collapseMobileHelp();
+    useCurrentLocation();
+  });
+
+  mobileShareButton.addEventListener("click", async () => {
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: document.title,
+          text: getShareText(),
+          url: getShareUrl(),
+        });
+      } catch (error) {
+        if (error?.name !== "AbortError") {
+          console.error(error);
+          setSearchMetaText("Could not open the share sheet. Try the share icon instead.");
+        }
+      }
       return;
     }
-
-    searchButton.disabled = true;
-    searchButton.textContent = "Searching";
-    searchMeta.textContent = "Looking up NYC address matches…";
-    clearSearchResults();
-
     try {
-      const results = await searchAddress(query);
-      renderSearchResults(results);
+      await navigator.clipboard.writeText(getShareUrl());
+      setSearchMetaText("Share link copied to your clipboard.");
     } catch (error) {
       console.error(error);
-      searchMeta.textContent = "Address lookup failed. Try a more specific NYC address.";
-    } finally {
-      searchButton.disabled = false;
-      searchButton.textContent = "Search";
+      setSearchMetaText("Could not copy the share link. Try again.");
     }
   });
 
+  mobileSheetToggle.addEventListener("click", () => {
+    setDrawerCollapsed(!state.drawerCollapsed);
+  });
+
+  mobileInstructionsLocateButton.addEventListener("click", () => {
+    collapseMobileHelp();
+    useCurrentLocation();
+  });
+
+  mobileHelpBubble.addEventListener("click", () => {
+    expandMobileHelp();
+  });
+
   syncFullscreenButton();
+  syncMobileSheet();
+  syncMobileHelp();
+  setDrawerCollapsed(true);
 }
 
 init().catch((error) => {
