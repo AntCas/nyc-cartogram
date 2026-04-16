@@ -72,3 +72,4 @@ Notes:
 - The interactive prototype estimates commute time using MTA GTFS subway travel times plus short walking access to and from stations.
 - Borough labels are placed from each borough's largest polygon so the output stays stable for fragmented multi-island geometries.
 - You can tune the static SVG warp in [generate_nyc_subway_weighted_projection.py](/Users/primaryuser/Desktop/nyc-projection/generate_nyc_subway_weighted_projection.py) and the website data build in [build_commute_site_data.py](/Users/primaryuser/Desktop/nyc-projection/build_commute_site_data.py).
+- Some UI/share icons are from [Iconmonstr](https://iconmonstr.com/).
