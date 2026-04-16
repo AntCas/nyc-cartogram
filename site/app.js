@@ -471,6 +471,14 @@ function escapeHtml(value) {
     .replaceAll("'", "&#39;");
 }
 
+function shortOriginLabel(label) {
+  if (!label) return "";
+  if (label === "My location") return label;
+  const primary = label.split(",")[0].trim();
+  if (/^\d/.test(primary)) return primary;
+  return primary.toLowerCase().startsWith("near ") ? primary : `Near ${primary}`;
+}
+
 function heatmapColor(minutes, alpha = 0.56) {
   const t = clamp(minutes / MAX_TIME_MINUTES, 0, 1);
   const stops = [
@@ -1459,11 +1467,16 @@ function drawMap(drawCtx, width, height) {
     drawHeatmap(drawCtx, warp, transform, state.showWarp);
   }
 
+  const nearest = warp?.seeds?.[0] ?? null;
+  const station = nearest ? state.data.stations[nearest.index] : null;
+
   drawStations(drawCtx, projectPoint);
   drawBoroughLabels(drawCtx, projectPoint);
 
   if (state.originPoint) {
-    drawMarker(drawCtx, projectPoint(state.originPoint), "#d75c2e", 24, 5.5);
+    const originScreen = projectPoint(state.originPoint);
+    drawMarker(drawCtx, originScreen, "#d75c2e", 24, 5.5);
+    drawPinnedLabel(drawCtx, originScreen, currentOriginSummary(station?.name ?? "NYC subway"));
   } else if (state.cursorScreen) {
     drawMarker(drawCtx, state.cursorScreen, "#d75c2e", 24, 5.5);
   }
@@ -1474,8 +1487,6 @@ function drawMap(drawCtx, width, height) {
     drawMarker(drawCtx, state.cursorScreen, "#17304d", 18, 4.3, 0.18);
   }
 
-  const nearest = warp?.seeds?.[0] ?? null;
-  const station = nearest ? state.data.stations[nearest.index] : null;
   const activeProbePoint = state.probePoint || (state.isMobile ? null : state.cursorPoint);
   const activeProbeScreen = state.probePoint
     ? projectPoint(state.probePoint)
@@ -1544,6 +1555,39 @@ function drawHoverTooltip(drawCtx, screenPoint, label) {
   drawCtx.restore();
 }
 
+function drawPinnedLabel(drawCtx, screenPoint, label, options = {}) {
+  const {
+    offsetX = 18,
+    offsetY = -20,
+    align = "left",
+  } = options;
+  const [sx, sy] = screenPoint;
+  drawCtx.save();
+  drawCtx.font = '700 13px "Avenir Next", "Helvetica Neue", Helvetica, sans-serif';
+  drawCtx.textAlign = "left";
+  drawCtx.textBaseline = "middle";
+
+  const metrics = drawCtx.measureText(label);
+  const paddingX = 10;
+  const boxWidth = metrics.width + paddingX * 2;
+  const boxHeight = 28;
+  const desiredX = align === "right" ? sx - offsetX - boxWidth : sx + offsetX;
+  const boxX = clamp(desiredX, 12, drawCtx.canvas.clientWidth - boxWidth - 12);
+  const boxY = clamp(sy + offsetY, 12, drawCtx.canvas.clientHeight - boxHeight - 12);
+
+  drawCtx.fillStyle = "rgba(255, 248, 239, 0.96)";
+  drawCtx.beginPath();
+  drawCtx.roundRect(boxX, boxY, boxWidth, boxHeight, 10);
+  drawCtx.fill();
+  drawCtx.strokeStyle = "rgba(23, 48, 77, 0.14)";
+  drawCtx.lineWidth = 1;
+  drawCtx.stroke();
+
+  drawCtx.fillStyle = "#17304d";
+  drawCtx.fillText(label, boxX + paddingX, boxY + boxHeight / 2 + 0.5);
+  drawCtx.restore();
+}
+
 function measureProbeFromWarp(normalizedOrigin, warp, probePoint) {
   if (!normalizedOrigin || !probePoint) return null;
   if (warp?.distances) {
@@ -1568,14 +1612,14 @@ function roundRectPath(drawCtx, x, y, width, height, radius) {
 }
 
 function currentOriginSummary(fallbackStationName = "NYC subway") {
-  if (state.originLabel) return state.originLabel;
+  if (state.originLabel) return shortOriginLabel(state.originLabel);
   return `Near ${fallbackStationName}`;
 }
 
 function exportShareImage() {
   const exportCanvas = document.createElement("canvas");
   exportCanvas.width = 1080;
-  exportCanvas.height = 1350;
+  exportCanvas.height = 1240;
   const exportCtx = exportCanvas.getContext("2d");
 
   const bg = exportCtx.createLinearGradient(0, 0, 0, exportCanvas.height);
@@ -1599,32 +1643,17 @@ function exportShareImage() {
 
   exportCtx.fillStyle = "#17304d";
   exportCtx.font = '700 58px "Avenir Next", "Helvetica Neue", Helvetica, sans-serif';
-  exportCtx.fillText("New York by commute time", 72, 150);
+  exportCtx.fillText("New York by commute time", 72, 146);
 
   const nearestSeed = state.currentRender?.warp?.seeds?.[0];
   const nearestStationName = nearestSeed ? state.data.stations[nearestSeed.index].name : "NYC subway";
-  const originSummary = currentOriginSummary(nearestStationName);
-  const modeSummary = state.pinned ? "Pinned origin" : "Live hover origin";
-  const heatmapSummary = state.showHeatmap ? "Heatmap on" : "Heatmap off";
   const normalizedOrigin = state.originPoint ? normalizeTravelPoint(state.originPoint) : null;
   const probeMeasurement = state.probePoint
     ? measureProbeFromWarp(normalizedOrigin, state.currentRender?.warp ?? null, state.probePoint)
     : null;
 
-  exportCtx.fillStyle = "#5f6f7f";
-  exportCtx.font = '500 27px "Avenir Next", "Helvetica Neue", Helvetica, sans-serif';
-  exportCtx.fillText(`${modeSummary}: ${originSummary}`, 72, 198);
-  exportCtx.fillText(`${heatmapSummary} • Subway + walking access • ${formatShareTime()}`, 72, 236);
-  if (probeMeasurement) {
-    exportCtx.fillText(
-      `Distance pin: ${formatTravelBreakdown(probeMeasurement.baseMinutes, probeMeasurement.swimMinutes)} away`,
-      72,
-      274,
-    );
-  }
-
   const cardX = 50;
-  const cardY = probeMeasurement ? 318 : 280;
+  const cardY = 198;
   const cardSize = 980;
   roundRectPath(exportCtx, cardX, cardY, cardSize, cardSize, 38);
   exportCtx.fillStyle = "rgba(255, 252, 247, 0.92)";
@@ -1658,6 +1687,17 @@ function exportShareImage() {
     mapSize,
     mapSize,
   );
+  if (state.originPoint && state.currentRender?.projectPoint) {
+    const originScreen = state.currentRender.projectPoint(state.originPoint);
+    drawPinnedLabel(
+      exportCtx,
+      [
+        mapX + ((originScreen[0] - sourceXCss) / sourceSquareCss) * mapSize,
+        mapY + ((originScreen[1] - sourceYCss) / sourceSquareCss) * mapSize,
+      ],
+      currentOriginSummary(nearestStationName),
+    );
+  }
   if (probeMeasurement && state.currentRender?.projectPoint && state.probePoint) {
     const probeScreen = state.currentRender.projectPoint(state.probePoint);
     drawHoverTooltip(
@@ -1708,7 +1748,7 @@ function exportShareImage() {
   if (state.showHeatmap) {
     const legendWidth = 360;
     const leftLabelWidth = 50;
-    const rightLabelWidth = 64;
+    const rightLabelWidth = 80;
     const legendX = cardX + cardSize - inset - legendWidth - 10;
     const legendY = cardY + cardSize - inset - 30;
     const legendLineX = legendX + leftLabelWidth;
@@ -1742,12 +1782,12 @@ function exportShareImage() {
 
   exportCtx.fillStyle = "#17304d";
   exportCtx.font = '700 24px "Avenir Next", "Helvetica Neue", Helvetica, sans-serif';
-  exportCtx.fillText("castrio.me/nyc", 72, 1300);
+  exportCtx.fillText("castrio.me/nyc", 72, 1202);
 
   exportCtx.textAlign = "right";
   exportCtx.fillStyle = "#5f6f7f";
   exportCtx.font = '500 12px "Avenir Next", "Helvetica Neue", Helvetica, sans-serif';
-  exportCtx.fillText("Data: MTA GTFS, NYC Open Data, OpenStreetMap", 1008, 1300);
+  exportCtx.fillText("Data: MTA GTFS, NYC Open Data, OpenStreetMap", 1008, 1202);
   exportCtx.textAlign = "left";
 
   return exportCanvas;
@@ -2200,7 +2240,7 @@ function renderSearchResults(results) {
         setAddressInputs(result.title);
         setSearchMetaText(`Pinned origin to ${result.title}.`);
         clearSearchResults();
-        state.originLabel = result.title;
+        state.originLabel = shortOriginLabel(result.title);
         setPinnedOrigin(worldPoint);
       });
     }
