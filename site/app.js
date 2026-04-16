@@ -36,6 +36,12 @@ const EMOJI_BURST_PER_TICK = 3;
 const EMOJI_BURST_LIFETIME_MS = 900;
 
 const EMOJI_BURST_SETS = {
+  github: ["💻", "🖥️", "⌨️", "⚙️", "🧑‍💻"],
+  nyc: ["🗽", "🌆", "🏙️", "🚕", "🍎"],
+  transit: ["🚇", "🚉", "🚊", "🚦", "🛤️"],
+  maps: ["🗺️", "📍", "🧭", "➡️", "📌"],
+  parks: ["🌳", "🌲", "🌿", "🍃", "🌱"],
+  anthony: ["🤓", "✨", "🧠", "💫", "🪄"],
   twitter: ["🐦", "🕊️", "🐥", "🪽"],
   linkedin: ["💼", "📈", "🤝", "🧠", "📊"],
   coffee: ["☕", "🥤", "🧋", "🍵"],
