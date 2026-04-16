@@ -1434,28 +1434,16 @@ function drawMap(drawCtx, width, height) {
 
   const nearest = warp?.seeds?.[0] ?? null;
   const station = nearest ? state.data.stations[nearest.index] : null;
-  const activeProbePoint = state.isMobile ? state.probePoint : state.cursorPoint;
-  const activeProbeScreen = state.isMobile
-    ? (state.probePoint ? projectPoint(state.probePoint) : null)
-    : state.cursorScreen;
+  const activeProbePoint = state.probePoint || (state.isMobile ? null : state.cursorPoint);
+  const activeProbeScreen = state.probePoint
+    ? projectPoint(state.probePoint)
+    : state.isMobile
+      ? null
+      : state.cursorScreen;
   if (state.originPoint && activeProbePoint) {
-    const probe = warp
-      ? estimateTravel(normalizedOrigin, warp.distances, activeProbePoint)
-      : (() => {
-          const destination = normalizeTravelPoint(activeProbePoint);
-          const swimMinutes = normalizedOrigin.swimMinutes + destination.swimMinutes;
-          const minutes =
-            distance(normalizedOrigin.point, destination.point) / state.data.meta.walkMetersPerMinute +
-            swimMinutes;
-          return {
-            minutes,
-            baseMinutes: minutes - swimMinutes,
-            swimMinutes,
-            destination,
-          };
-        })();
+    const probe = measureProbeFromWarp(normalizedOrigin, warp, activeProbePoint);
     statusText.textContent = station ? `Pinned near ${station.name}` : "Pinned origin";
-    if (activeProbeScreen) {
+    if (probe && activeProbeScreen) {
       drawHoverTooltip(drawCtx, activeProbeScreen, `${formatTravelBreakdown(probe.baseMinutes, probe.swimMinutes)} away`);
     }
   } else {
@@ -1514,6 +1502,24 @@ function drawHoverTooltip(drawCtx, screenPoint, label) {
   drawCtx.restore();
 }
 
+function measureProbeFromWarp(normalizedOrigin, warp, probePoint) {
+  if (!normalizedOrigin || !probePoint) return null;
+  if (warp?.distances) {
+    return estimateTravel(normalizedOrigin, warp.distances, probePoint);
+  }
+  const destination = normalizeTravelPoint(probePoint);
+  const swimMinutes = normalizedOrigin.swimMinutes + destination.swimMinutes;
+  const minutes =
+    distance(normalizedOrigin.point, destination.point) / state.data.meta.walkMetersPerMinute +
+    swimMinutes;
+  return {
+    minutes,
+    baseMinutes: minutes - swimMinutes,
+    swimMinutes,
+    destination,
+  };
+}
+
 function roundRectPath(drawCtx, x, y, width, height, radius) {
   drawCtx.beginPath();
   drawCtx.roundRect(x, y, width, height, radius);
@@ -1558,14 +1564,25 @@ function exportShareImage() {
   const originSummary = currentOriginSummary(nearestStationName);
   const modeSummary = state.pinned ? "Pinned origin" : "Live hover origin";
   const heatmapSummary = state.showHeatmap ? "Heatmap on" : "Heatmap off";
+  const normalizedOrigin = state.originPoint ? normalizeTravelPoint(state.originPoint) : null;
+  const probeMeasurement = state.probePoint
+    ? measureProbeFromWarp(normalizedOrigin, state.currentRender?.warp ?? null, state.probePoint)
+    : null;
 
   exportCtx.fillStyle = "#5f6f7f";
   exportCtx.font = '500 27px "Avenir Next", "Helvetica Neue", Helvetica, sans-serif';
   exportCtx.fillText(`${modeSummary}: ${originSummary}`, 72, 198);
   exportCtx.fillText(`${heatmapSummary} • Subway + walking access • ${formatShareTime()}`, 72, 236);
+  if (probeMeasurement) {
+    exportCtx.fillText(
+      `Distance pin: ${formatTravelBreakdown(probeMeasurement.baseMinutes, probeMeasurement.swimMinutes)} away`,
+      72,
+      274,
+    );
+  }
 
   const cardX = 50;
-  const cardY = 280;
+  const cardY = probeMeasurement ? 318 : 280;
   const cardSize = 980;
   roundRectPath(exportCtx, cardX, cardY, cardSize, cardSize, 38);
   exportCtx.fillStyle = "rgba(255, 252, 247, 0.92)";
@@ -1582,6 +1599,15 @@ function exportShareImage() {
   exportCtx.save();
   exportCtx.clip();
   exportCtx.drawImage(mapCanvas, mapX, mapY, mapSize, mapSize);
+  if (probeMeasurement && state.currentRender?.projectPoint && state.probePoint) {
+    const probeScreen = state.currentRender.projectPoint(state.probePoint);
+    const tooltipScale = mapSize / mapCanvas.clientWidth;
+    drawHoverTooltip(
+      exportCtx,
+      [mapX + probeScreen[0] * tooltipScale, mapY + probeScreen[1] * tooltipScale],
+      `${formatTravelBreakdown(probeMeasurement.baseMinutes, probeMeasurement.swimMinutes)} away`,
+    );
+  }
 
   const reachability = state.currentRender?.warp?.reachability ?? null;
   if (reachability) {
