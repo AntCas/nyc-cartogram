@@ -9,6 +9,10 @@
       "zone_name": "castrio.me"
     },
     {
+      "pattern": "castrio.me/nyc/",
+      "zone_name": "castrio.me"
+    },
+    {
       "pattern": "castrio.me/nyc/*",
       "zone_name": "castrio.me"
     }
