@@ -5,15 +5,7 @@
   "compatibility_date": "2026-04-13",
   "routes": [
     {
-      "pattern": "castrio.me/nyc",
-      "zone_name": "castrio.me"
-    },
-    {
-      "pattern": "castrio.me/nyc/",
-      "zone_name": "castrio.me"
-    },
-    {
-      "pattern": "castrio.me/nyc/*",
+      "pattern": "castrio.me/nyc*",
       "zone_name": "castrio.me"
     }
   ],
