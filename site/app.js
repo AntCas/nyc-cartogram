@@ -1595,16 +1595,35 @@ function exportShareImage() {
   const mapX = cardX + inset;
   const mapY = cardY + inset;
   const mapSize = cardSize - inset * 2;
+  const sourceWidthCss = mapCanvas.clientWidth;
+  const sourceHeightCss = mapCanvas.clientHeight;
+  const sourceSquareCss = Math.min(sourceWidthCss, sourceHeightCss);
+  const sourceXCss = (sourceWidthCss - sourceSquareCss) / 2;
+  const sourceYCss = (sourceHeightCss - sourceSquareCss) / 2;
+  const sourceScaleX = mapCanvas.width / Math.max(sourceWidthCss, 1);
+  const sourceScaleY = mapCanvas.height / Math.max(sourceHeightCss, 1);
   roundRectPath(exportCtx, mapX, mapY, mapSize, mapSize, 28);
   exportCtx.save();
   exportCtx.clip();
-  exportCtx.drawImage(mapCanvas, mapX, mapY, mapSize, mapSize);
+  exportCtx.drawImage(
+    mapCanvas,
+    sourceXCss * sourceScaleX,
+    sourceYCss * sourceScaleY,
+    sourceSquareCss * sourceScaleX,
+    sourceSquareCss * sourceScaleY,
+    mapX,
+    mapY,
+    mapSize,
+    mapSize,
+  );
   if (probeMeasurement && state.currentRender?.projectPoint && state.probePoint) {
     const probeScreen = state.currentRender.projectPoint(state.probePoint);
-    const tooltipScale = mapSize / mapCanvas.clientWidth;
     drawHoverTooltip(
       exportCtx,
-      [mapX + probeScreen[0] * tooltipScale, mapY + probeScreen[1] * tooltipScale],
+      [
+        mapX + ((probeScreen[0] - sourceXCss) / sourceSquareCss) * mapSize,
+        mapY + ((probeScreen[1] - sourceYCss) / sourceSquareCss) * mapSize,
+      ],
       `${formatTravelBreakdown(probeMeasurement.baseMinutes, probeMeasurement.swimMinutes)} away`,
     );
   }
