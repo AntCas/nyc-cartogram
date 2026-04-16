@@ -2293,6 +2293,12 @@ async function init() {
   state.originPoint = null;
 
   const sharedView = parseSharedView();
+  const hasSharedViewParams =
+    Boolean(sharedView.origin) ||
+    Boolean(sharedView.probe) ||
+    sharedView.warp !== null ||
+    sharedView.heatmap !== null;
+  state.mobileHelpCollapsed = hasSharedViewParams;
   if (sharedView.zoom) {
     state.viewportScale = sharedView.zoom;
   }
