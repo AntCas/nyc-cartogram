@@ -1,19 +1,32 @@
 # NYC Cartogram
 
-This project generates a subway-access weighted map of New York City as an SVG and interactive web app.
+This project generates two related artifacts for New York City:
 
-You can check it out here: https://castrio.me/nyc
+- a static SVG cartogram that expands places with stronger subway access and compresses places with weaker access
+- an interactive commute-time web app that lets you pin an origin, inspect travel times, toggle the warp and heatmap layers, and share deep links to a view
+
+Live site: [castrio.me/nyc](https://castrio.me/nyc/)
 
 <img width="1080" height="1350" alt="nyc-commute-cartogram-1776285343768" src="https://github.com/user-attachments/assets/e5324236-2a0e-48cd-b504-143b4cedc457" />
 
+## What The Project Uses
 
-The script:
-- uses official borough boundaries from NYC Open Data
-- uses official MTA GTFS subway route shapes and station locations
-- draws official subway route colors from the GTFS `route_color` field
-- adds major streets and larger parks/open spaces to the basemap
-- approximates walking distance as straight-line distance times a circuity factor
-- expands the map where subway access is stronger and compresses it where access is weaker
+- NYC borough boundaries
+- MTA GTFS subway data for stations, routes, and travel times
+- major streets and park/open-space overlays for the basemap
+- a distance-based warp for the static SVG
+- a station-to-station network plus walking access model for the interactive commute map
+
+The interactive app includes the Staten Island Ferry connection, but it does not model buses, regional rail, or real-time schedules.
+
+## Requirements
+
+- Python 3
+- `pnpm` and Node.js only if you want to run or deploy the Cloudflare Worker
+
+Both Python scripts use the standard library only, so there is no Python dependency install step.
+
+## Generate The Static SVG
 
 Run:
 
@@ -27,10 +40,32 @@ Output:
 output/nyc_subway_weighted_projection.svg
 ```
 
-Interactive website:
+Notes:
+
+- If `data/borough_boundaries.geojson` is missing, the script can fetch borough boundaries automatically.
+- The other source files are expected under `data/`.
+
+## Build The Interactive Site Data
+
+Run:
 
 ```bash
 python3 build_commute_site_data.py
+```
+
+Output:
+
+```text
+site/data/commute_map_data.json
+```
+
+This produces the compact data bundle consumed by the front-end app in `site/`.
+
+## Local Preview
+
+For a simple static preview:
+
+```bash
 python3 -m http.server 8000
 ```
 
@@ -40,36 +75,70 @@ Then open:
 http://localhost:8000/site/
 ```
 
-Website files:
-- [site/index.html](/Users/primaryuser/Desktop/nyc-projection/site/index.html)
-- [site/app.js](/Users/primaryuser/Desktop/nyc-projection/site/app.js)
-- [site/styles.css](/Users/primaryuser/Desktop/nyc-projection/site/styles.css)
-- [site/data/commute_map_data.json](/Users/primaryuser/Desktop/nyc-projection/site/data/commute_map_data.json)
+Useful local-preview notes:
 
-Cloudflare deploy:
+- The site loads its data from `site/data/commute_map_data.json`.
+- Address search uses OpenStreetMap Nominatim at runtime, so that feature needs internet access.
+- On plain static localhost, production-style URLs like `/nyc/@40.71267,-73.92366` are not available. Use query-string sharing there instead.
+
+## Cloudflare Worker Dev And Deploy
+
+Install the Worker tooling:
 
 ```bash
-pnpm add -D wrangler@latest
+pnpm install
+```
+
+Run the Worker locally:
+
+```bash
+pnpm run dev
+```
+
+Deploy:
+
+```bash
 pnpm run deploy
 ```
 
 This repo includes:
-- [wrangler.jsonc](/Users/primaryuser/Desktop/nyc-projection/wrangler.jsonc) to upload the `site/` directory as static assets
-- [src/worker.js](/Users/primaryuser/Desktop/nyc-projection/src/worker.js) to serve the site from the `/nyc/` path prefix on `castrio.me`
 
-Deploy notes:
+- [wrangler.jsonc](/Users/primaryuser/Desktop/nyc-projection/wrangler.jsonc) to bundle the `site/` directory as Worker assets
+- [src/worker.js](/Users/primaryuser/Desktop/nyc-projection/src/worker.js) to serve the app from the `/nyc` path prefix on `castrio.me`
+
+Deployment behavior:
+
 - The Worker serves the app at `https://castrio.me/nyc/`.
-- `src/worker.js` redirects `/nyc` to `/nyc/` and strips the `/nyc` prefix before fetching bundled assets.
-- Static assets are bundled from `site/`, so requests like `/nyc/styles.css`, `/nyc/app.js`, `/nyc/favicon.svg`, and `/nyc/data/commute_map_data.json` are all handled by the Worker deployment.
-- Disable any older Cloudflare URL Rewrite Rules or Cloud Connector routes for this app path. They can conflict with the Worker and cause 404s.
-- If this is your first local `pnpm` install and Wrangler dependencies were blocked, run `pnpm approve-builds` and approve the relevant packages before deploying again.
-- For local development, open `http://localhost:8000/site/`. Pretty origin routes like `/nyc/@40.71267,-73.92366` work in production and under `wrangler dev`; plain static localhost falls back to `?origin=40.71267,-73.92366`.
+- Requests to `/nyc` are normalized to `/nyc/`.
+- Asset requests under `/nyc/...` are rewritten to bundled assets from `site/`.
+- Pretty origin routes like `https://castrio.me/nyc/@40.71267,-73.92366` are handled by the Worker because route-like paths fall back to `site/index.html`.
 
-Notes:
-- The map now uses a single shared geographic projection for boroughs, stations, route shapes, parks, and streets so transit layers stay aligned to the basemap.
-- Because people enter the subway at stations, the weighting is based on distance to the nearest station complex rather than track geometry alone.
-- The warp is a lightweight cumulative-density transform, not a formal cartogram solver.
-- The interactive prototype estimates commute time using MTA GTFS subway travel times plus short walking access to and from stations.
-- Borough labels are placed from each borough's largest polygon so the output stays stable for fragmented multi-island geometries.
-- You can tune the static SVG warp in [generate_nyc_subway_weighted_projection.py](/Users/primaryuser/Desktop/nyc-projection/generate_nyc_subway_weighted_projection.py) and the website data build in [build_commute_site_data.py](/Users/primaryuser/Desktop/nyc-projection/build_commute_site_data.py).
+If this is your first local `pnpm` install and Wrangler postinstall steps were blocked, run `pnpm approve-builds` and approve the relevant packages before deploying again.
+
+## Project Layout
+
+- [generate_nyc_subway_weighted_projection.py](/Users/primaryuser/Desktop/nyc-projection/generate_nyc_subway_weighted_projection.py): builds the static SVG cartogram
+- [build_commute_site_data.py](/Users/primaryuser/Desktop/nyc-projection/build_commute_site_data.py): builds the interactive site data bundle
+- [site/index.html](/Users/primaryuser/Desktop/nyc-projection/site/index.html): app shell and metadata
+- [site/app.js](/Users/primaryuser/Desktop/nyc-projection/site/app.js): interactive map, search, sharing, and rendering logic
+- [site/styles.css](/Users/primaryuser/Desktop/nyc-projection/site/styles.css): site styles
+- [site/data/commute_map_data.json](/Users/primaryuser/Desktop/nyc-projection/site/data/commute_map_data.json): generated site dataset
+- [src/worker.js](/Users/primaryuser/Desktop/nyc-projection/src/worker.js): Cloudflare Worker entrypoint
+
+## Current App Behavior
+
+- hover or tap to choose an origin
+- pin an origin and inspect commute times back to that point
+- toggle warp and heatmap layers
+- zoom and full-screen the map
+- search for NYC addresses
+- use browser geolocation when available
+- export and share views, including deep links
+- display a 60-minute reachability score
+
+## Notes
+
+- The map uses a shared geographic projection across boroughs, stations, route shapes, parks, and streets so layers stay aligned.
+- For the interactive app, travel times are based on subway travel plus walking access to and from stations.
+- Borough labels are placed from each borough's largest polygon to keep labels stable for fragmented geometries.
 - Some UI/share icons are from [Iconmonstr](https://iconmonstr.com/).
