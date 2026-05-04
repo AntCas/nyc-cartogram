@@ -169,16 +169,52 @@
               <p id="statusText">Loading transit network…</p>
             </div>
             <div class="panel-controls">
-              <label class="toggle-control" for="warpToggle">
-                <input id="warpToggle" type="checkbox" />
-                <span class="toggle-track"><span class="toggle-thumb"></span></span>
-                <span class="toggle-label">warp</span>
-              </label>
-              <label class="toggle-control" for="heatmapToggle">
-                <input id="heatmapToggle" type="checkbox" />
-                <span class="toggle-track"><span class="toggle-thumb"></span></span>
-                <span class="toggle-label">heatmap</span>
-              </label>
+              <details class="settings-menu" id="desktopSettingsMenu">
+                <summary class="settings-summary">
+                  <svg class="settings-summary-icon" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M12 9c.552 0 1 .449 1 1s-.448 1-1 1-1-.449-1-1 .448-1 1-1zm0-2c-1.657 0-3 1.343-3 3s1.343 3 3 3 3-1.343 3-3-1.343-3-3-3zm-9 4c-1.657 0-3 1.343-3 3s1.343 3 3 3 3-1.343 3-3-1.343-3-3-3zm18 0c-1.657 0-3 1.343-3 3s1.343 3 3 3 3-1.343 3-3-1.343-3-3-3zm-9-6c.343 0 .677.035 1 .101v-3.101c0-.552-.447-1-1-1s-1 .448-1 1v3.101c.323-.066.657-.101 1-.101zm9 4c.343 0 .677.035 1 .101v-7.101c0-.552-.447-1-1-1s-1 .448-1 1v7.101c.323-.066.657-.101 1-.101zm0 10c-.343 0-.677-.035-1-.101v3.101c0 .552.447 1 1 1s1-.448 1-1v-3.101c-.323.066-.657.101-1 .101zm-18-10c.343 0 .677.035 1 .101v-7.101c0-.552-.447-1-1-1s-1 .448-1 1v7.101c.323-.066.657-.101 1-.101zm9 6c-.343 0-.677-.035-1-.101v7.101c0 .552.447 1 1 1s1-.448 1-1v-7.101c-.323.066-.657.101-1 .101zm-9 4c-.343 0-.677-.035-1-.101v3.101c0 .552.447 1 1 1s1-.448 1-1v-3.101c-.323.066-.657.101-1 .101z"/>
+                  </svg>
+                  <span>Settings</span>
+                </summary>
+                <div class="settings-card">
+                  <div class="settings-toggle-group">
+                    <label class="toggle-control settings-toggle-control" for="warpToggle">
+                      <input id="warpToggle" type="checkbox" />
+                      <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                      <span class="toggle-label">warp</span>
+                    </label>
+                    <label class="toggle-control settings-toggle-control" for="heatmapToggle">
+                      <input id="heatmapToggle" type="checkbox" />
+                      <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                      <span class="toggle-label">heatmap</span>
+                    </label>
+                    <label class="toggle-control settings-toggle-control" for="outlineToggle">
+                      <input id="outlineToggle" type="checkbox" />
+                      <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                      <span class="toggle-label">outline</span>
+                    </label>
+                  </div>
+                  <div class="settings-grid">
+                    <label class="settings-field">
+                      <span class="settings-field-head">
+                        <span>Maximum transit time</span>
+                        <strong data-setting-value="maxTransitTime">60 min</strong>
+                      </span>
+                      <div class="settings-input-row">
+                        <input data-setting-key="maxTransitTime" data-setting-unit="minutes" type="range" min="30" max="120" step="5" />
+                      </div>
+                    </label>
+                  </div>
+                  <div class="settings-actions">
+                    <button class="settings-reset-button" type="button" data-settings-reset>
+                      Reset defaults
+                    </button>
+                    <button class="settings-save-button" type="button" data-settings-save>
+                      Save
+                    </button>
+                  </div>
+                </div>
+              </details>
             </div>
           </div>
           <div class="map-frame">
@@ -324,18 +360,52 @@
                   </p>
                 </div>
               </div>
-              <div class="mobile-drawer-controls">
-                <label class="toggle-control mobile-toggle-control" for="mobileWarpToggle">
-                  <input id="mobileWarpToggle" type="checkbox" />
-                  <span class="toggle-track"><span class="toggle-thumb"></span></span>
-                  <span class="toggle-label">warp</span>
-                </label>
-                <label class="toggle-control mobile-toggle-control" for="mobileHeatmapToggle">
-                  <input id="mobileHeatmapToggle" type="checkbox" />
-                  <span class="toggle-track"><span class="toggle-thumb"></span></span>
-                  <span class="toggle-label">heatmap</span>
-                </label>
-              </div>
+              <details class="settings-menu mobile-settings-menu" id="mobileSettingsMenu">
+                <summary class="settings-summary">
+                  <svg class="settings-summary-icon" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M12 9c.552 0 1 .449 1 1s-.448 1-1 1-1-.449-1-1 .448-1 1-1zm0-2c-1.657 0-3 1.343-3 3s1.343 3 3 3 3-1.343 3-3-1.343-3-3-3zm-9 4c-1.657 0-3 1.343-3 3s1.343 3 3 3 3-1.343 3-3-1.343-3-3-3zm18 0c-1.657 0-3 1.343-3 3s1.343 3 3 3 3-1.343 3-3-1.343-3-3-3zm-9-6c.343 0 .677.035 1 .101v-3.101c0-.552-.447-1-1-1s-1 .448-1 1v3.101c.323-.066.657-.101 1-.101zm9 4c.343 0 .677.035 1 .101v-7.101c0-.552-.447-1-1-1s-1 .448-1 1v7.101c.323-.066.657-.101 1-.101zm0 10c-.343 0-.677-.035-1-.101v3.101c0 .552.447 1 1 1s1-.448 1-1v-3.101c-.323.066-.657.101-1 .101zm-18-10c.343 0 .677.035 1 .101v-7.101c0-.552-.447-1-1-1s-1 .448-1 1v7.101c.323-.066.657-.101 1-.101zm9 6c-.343 0-.677-.035-1-.101v7.101c0 .552.447 1 1 1s1-.448 1-1v-7.101c-.323.066-.657.101-1 .101zm-9 4c-.343 0-.677-.035-1-.101v3.101c0 .552.447 1 1 1s1-.448 1-1v-3.101c-.323.066-.657.101-1 .101z"/>
+                  </svg>
+                  <span>Settings</span>
+                </summary>
+                <div class="settings-card">
+                  <div class="settings-toggle-group mobile-settings-toggle-group">
+                    <label class="toggle-control mobile-toggle-control settings-toggle-control" for="mobileWarpToggle">
+                      <input id="mobileWarpToggle" type="checkbox" />
+                      <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                      <span class="toggle-label">warp</span>
+                    </label>
+                    <label class="toggle-control mobile-toggle-control settings-toggle-control" for="mobileHeatmapToggle">
+                      <input id="mobileHeatmapToggle" type="checkbox" />
+                      <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                      <span class="toggle-label">heatmap</span>
+                    </label>
+                    <label class="toggle-control mobile-toggle-control settings-toggle-control" for="mobileOutlineToggle">
+                      <input id="mobileOutlineToggle" type="checkbox" />
+                      <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                      <span class="toggle-label">outline</span>
+                    </label>
+                  </div>
+                  <div class="settings-grid">
+                    <label class="settings-field">
+                      <span class="settings-field-head">
+                        <span>Maximum transit time</span>
+                        <strong data-setting-value="maxTransitTime">60 min</strong>
+                      </span>
+                      <div class="settings-input-row">
+                        <input data-setting-key="maxTransitTime" data-setting-unit="minutes" type="range" min="30" max="120" step="5" />
+                      </div>
+                    </label>
+                  </div>
+                  <div class="settings-actions">
+                    <button class="settings-reset-button" type="button" data-settings-reset>
+                      Reset defaults
+                    </button>
+                    <button class="settings-save-button" type="button" data-settings-save>
+                      Save
+                    </button>
+                  </div>
+                </div>
+              </details>
               <form id="mobileSearchForm" class="mobile-search-form" autocomplete="off">
                 <label class="stat-label" for="mobileAddressInput">Pin by Address</label>
                 <div class="mobile-search-row">

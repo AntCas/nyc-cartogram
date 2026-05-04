@@ -1,6 +1,6 @@
 const DATA_URL = new URL("./data/commute_map_data.json", import.meta.url).toString();
-const ENTRY_WAIT_MINUTES = 2.5;
-const MAX_TIME_MINUTES = 80;
+const DEFAULT_TRANSIT_TIME_MINUTES = 4;
+const DEFAULT_MAX_TIME_MINUTES = 60;
 const MIN_AREA_WEIGHT = 1;
 const MAX_AREA_WEIGHT = 2.67;
 const MIN_VIEWPORT_SCALE = 1;
@@ -28,13 +28,15 @@ const IMAGE_WARP_BLOCK_CELLS = 4;
 const IMAGE_WARP_OVERDRAW_PX = 0.35;
 const WARP_LINE_CURVE_TOLERANCE_PX = 1.1;
 const WARP_LINE_MAX_SUBDIVISION_DEPTH = 7;
-const SWIM_METERS_PER_MINUTE = 28;
+const DEFAULT_SWIM_METERS_PER_MINUTE = 28;
 const REACHABILITY_THRESHOLD_MINUTES = 60;
 const SHARE_COORDINATE_DECIMALS = 5;
 const EMOJI_BURST_INTERVAL_MS = 90;
 const EMOJI_BURST_PER_TICK = 3;
 const EMOJI_BURST_LIFETIME_MS = 900;
 const MOBILE_DRAWER_SWIPE_THRESHOLD_PX = 36;
+const METERS_PER_MINUTE_PER_MPH = 26.8224;
+const SETTINGS_STORAGE_KEY = "nyc-cartogram-settings-v1";
 
 const EMOJI_BURST_SETS = {
   github: ["💻", "🖥️", "⌨️", "⚙️", "🧑‍💻"],
@@ -53,6 +55,7 @@ const state = {
   ready: false,
   showWarp: true,
   showHeatmap: true,
+  showReachOutline: false,
   showPinHint: true,
   isMobile: false,
   drawerCollapsed: false,
@@ -79,6 +82,9 @@ const state = {
   transform: null,
   currentRender: null,
   baseMapCache: null,
+  travelSettings: null,
+  travelSettingsDefaults: null,
+  dynamicAdjacency: null,
   dirty: true,
 };
 
@@ -86,6 +92,7 @@ const mapCanvas = document.getElementById("mapCanvas");
 const statusText = document.getElementById("statusText");
 const warpToggle = document.getElementById("warpToggle");
 const heatmapToggle = document.getElementById("heatmapToggle");
+const outlineToggle = document.getElementById("outlineToggle");
 const heatmapLegend = document.getElementById("heatmapLegend");
 const heatmapLegendMin = document.getElementById("heatmapLegendMin");
 const heatmapLegendMax = document.getElementById("heatmapLegendMax");
@@ -123,6 +130,7 @@ const mobileReachValue = document.getElementById("mobileReachValue");
 const mobileReachMeta = document.getElementById("mobileReachMeta");
 const mobileWarpToggle = document.getElementById("mobileWarpToggle");
 const mobileHeatmapToggle = document.getElementById("mobileHeatmapToggle");
+const mobileOutlineToggle = document.getElementById("mobileOutlineToggle");
 const mobileSearchForm = document.getElementById("mobileSearchForm");
 const mobileAddressInput = document.getElementById("mobileAddressInput");
 const mobileSearchButton = document.getElementById("mobileSearchButton");
@@ -134,6 +142,11 @@ const mobileMapHelp = document.getElementById("mobileMapHelp");
 const mobileMapInstructions = document.getElementById("mobileMapInstructions");
 const mobileInstructionsLocateButton = document.getElementById("mobileInstructionsLocateButton");
 const mobileHelpBubble = document.getElementById("mobileHelpBubble");
+const settingsInputs = Array.from(document.querySelectorAll("[data-setting-key]"));
+const settingsValueLabels = Array.from(document.querySelectorAll("[data-setting-value]"));
+const settingsResetButtons = Array.from(document.querySelectorAll("[data-settings-reset]"));
+const settingsSaveButtons = Array.from(document.querySelectorAll("[data-settings-save]"));
+const settingsMenus = Array.from(document.querySelectorAll(".settings-menu"));
 const ctx = mapCanvas.getContext("2d");
 const panelCard = document.querySelector(".panel-card");
 const footerEmojiLinks = Array.from(document.querySelectorAll("[data-emoji-burst]"));
@@ -171,6 +184,122 @@ shareLinkedInIcon.src = new URL("./LinkedIn.png", import.meta.url).toString();
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
+}
+
+function metersPerMinuteToMph(value) {
+  return value / METERS_PER_MINUTE_PER_MPH;
+}
+
+function mphToMetersPerMinute(value) {
+  return value * METERS_PER_MINUTE_PER_MPH;
+}
+
+function roundToStep(value, step) {
+  return Math.round(value / step) * step;
+}
+
+function getTravelSettingsDefaults() {
+  const meta = state.data?.meta ?? {};
+  return {
+    walkingSpeed: meta.walkMetersPerMinute ?? 80,
+    swimSpeed: DEFAULT_SWIM_METERS_PER_MINUTE,
+    transitTime: meta.defaultBoardWait ?? DEFAULT_TRANSIT_TIME_MINUTES,
+    transferTime: meta.transferPenalty ?? 4,
+    maxTransitTime: DEFAULT_MAX_TIME_MINUTES,
+  };
+}
+
+function sanitizeTravelSettings(rawSettings, defaults = state.travelSettingsDefaults || getTravelSettingsDefaults()) {
+  const raw = rawSettings ?? {};
+  return {
+    walkingSpeed: clamp(
+      Number.isFinite(raw.walkingSpeed) ? raw.walkingSpeed : defaults.walkingSpeed,
+      mphToMetersPerMinute(2),
+      mphToMetersPerMinute(5),
+    ),
+    swimSpeed: clamp(
+      Number.isFinite(raw.swimSpeed) ? raw.swimSpeed : defaults.swimSpeed,
+      0,
+      mphToMetersPerMinute(2.5),
+    ),
+    transitTime: clamp(
+      Number.isFinite(raw.transitTime) ? raw.transitTime : defaults.transitTime,
+      1,
+      12,
+    ),
+    transferTime: clamp(
+      Number.isFinite(raw.transferTime) ? raw.transferTime : defaults.transferTime,
+      1,
+      15,
+    ),
+    maxTransitTime: clamp(
+      Number.isFinite(raw.maxTransitTime) ? raw.maxTransitTime : defaults.maxTransitTime,
+      30,
+      120,
+    ),
+  };
+}
+
+function currentTravelSettings() {
+  return state.travelSettings || state.travelSettingsDefaults || getTravelSettingsDefaults();
+}
+
+function loadStoredTravelSettings() {
+  try {
+    const raw = window.localStorage.getItem(SETTINGS_STORAGE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch (error) {
+    console.error(error);
+    return null;
+  }
+}
+
+function persistTravelSettings() {
+  try {
+    window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(currentTravelSettings()));
+  } catch (error) {
+    console.error(error);
+  }
+}
+
+function settingToInputValue(key, value) {
+  if (key === "walkingSpeed" || key === "swimSpeed") {
+    return String(roundToStep(metersPerMinuteToMph(value), 0.1).toFixed(1));
+  }
+  const step = key === "maxTransitTime" ? 5 : 0.5;
+  const digits = step < 1 ? 1 : 0;
+  return String(roundToStep(value, step).toFixed(digits));
+}
+
+function formatSettingLabel(key, value) {
+  if (key === "walkingSpeed" || key === "swimSpeed") {
+    return `${Number(value).toFixed(1)} mph`;
+  }
+  return `${Number(value) % 1 === 0 ? Number(value).toFixed(0) : Number(value).toFixed(1)} min`;
+}
+
+function syncTravelSettingsInputs() {
+  const settings = currentTravelSettings();
+  for (const input of settingsInputs) {
+    const key = input.dataset.settingKey;
+    if (!key || !(key in settings)) continue;
+    input.value = settingToInputValue(key, settings[key]);
+  }
+  for (const label of settingsValueLabels) {
+    const key = label.dataset.settingValue;
+    if (!key || !(key in settings)) continue;
+    label.textContent = formatSettingLabel(key, Number(settingToInputValue(key, settings[key])));
+  }
+}
+
+function applyTravelSettings(nextSettings, { persist = true } = {}) {
+  state.travelSettings = sanitizeTravelSettings(nextSettings);
+  syncTravelSettingsInputs();
+  syncHeatmapLegend();
+  if (persist) persistTravelSettings();
+  state.dirty = true;
+  requestDraw();
 }
 
 function canShowEmojiBursts() {
@@ -390,6 +519,7 @@ function classifySurface(point) {
 }
 
 function normalizeTravelPoint(point) {
+  const settings = currentTravelSettings();
   const surface = classifySurface(point);
   if (surface !== "water") {
     return {
@@ -403,7 +533,7 @@ function normalizeTravelPoint(point) {
   return {
     surface,
     point: border.point,
-    swimMinutes: border.distance / SWIM_METERS_PER_MINUTE,
+    swimMinutes: border.distance / settings.swimSpeed,
     swimDistance: border.distance,
   };
 }
@@ -455,6 +585,11 @@ function formatTravelBreakdown(baseMinutes, swimMinutes) {
   if (!Number.isFinite(baseMinutes)) return "unreachable";
   if (swimMinutes < 0.5) return formatMinutes(baseMinutes);
   return `${Math.round(baseMinutes)} min + ${Math.round(swimMinutes)} min swim 🌊`;
+}
+
+function formatDistanceLabel(baseMinutes, swimMinutes) {
+  const label = formatTravelBreakdown(baseMinutes, swimMinutes);
+  return label === "unreachable" ? label : `${label} away`;
 }
 
 function formatShareTime(date = new Date()) {
@@ -634,6 +769,9 @@ function buildViewUrlFragment(
   if (!state.showHeatmap) {
     params.set("heatmap", "0");
   }
+  if (state.showReachOutline) {
+    params.set("outline", "1");
+  }
 
   const query = params.toString();
   if (isLocalStaticDev()) {
@@ -655,7 +793,8 @@ function parseSharedView() {
   const zoom = Number.isFinite(zoomRaw) ? clamp(zoomRaw, MIN_VIEWPORT_SCALE, MAX_VIEWPORT_SCALE) : null;
   const warp = searchParams.has("warp") ? searchParams.get("warp") !== "0" : null;
   const heatmap = searchParams.has("heatmap") ? searchParams.get("heatmap") !== "0" : null;
-  return { origin, probe, zoom, warp, heatmap };
+  const outline = searchParams.has("outline") ? searchParams.get("outline") !== "0" : null;
+  return { origin, probe, zoom, warp, heatmap, outline };
 }
 
 function replaceBrowserUrl(pathOrQuery = "") {
@@ -694,7 +833,7 @@ function shortOriginLabel(label) {
 }
 
 function heatmapColor(minutes, alpha = 0.56) {
-  const t = clamp(minutes / MAX_TIME_MINUTES, 0, 1);
+  const t = clamp(minutes / currentTravelSettings().maxTransitTime, 0, 1);
   const stops = [
     { t: 0, color: [220, 69, 37] },
     { t: 0.2, color: [244, 127, 46] },
@@ -718,7 +857,7 @@ function heatmapColor(minutes, alpha = 0.56) {
 }
 
 function minuteToAreaWeight(minutes) {
-  const t = clamp(minutes / MAX_TIME_MINUTES, 0, 1);
+  const t = clamp(minutes / currentTravelSettings().maxTransitTime, 0, 1);
   return MIN_AREA_WEIGHT + (1 - t) * (MAX_AREA_WEIGHT - MIN_AREA_WEIGHT);
 }
 
@@ -1142,13 +1281,56 @@ function drawWarpedBaseMap(drawCtx, width, height, warp, sourceTransform, destin
   drawCtx.restore();
 }
 
+function buildDynamicAdjacency() {
+  const defaults = state.travelSettingsDefaults || getTravelSettingsDefaults();
+  const routeStates = state.data.routeStates;
+  const stations = state.data.stations;
+
+  return state.data.adjacency.map((edges, fromIndex) => {
+    const fromState = routeStates[fromIndex];
+    return edges.map(([toIndex, weight]) => {
+      const toState = routeStates[toIndex];
+      const boardingDelta =
+        (state.data.routeWaits?.[toState.routeId] ?? defaults.transitTime) - defaults.transitTime;
+      if (fromState.routeId === toState.routeId) {
+        return { toIndex, kind: "ride", rideMinutes: weight };
+      }
+
+      if (fromState.stationIndex === toState.stationIndex) {
+        return { toIndex, kind: "transfer", boardingDelta };
+      }
+
+      const fromPoint = stations[fromState.stationIndex].point;
+      const toPoint = stations[toState.stationIndex].point;
+      const walkDistance = distance(fromPoint, toPoint);
+      const walkPenalty = Math.max(
+        0,
+        weight -
+          walkDistance / defaults.walkingSpeed -
+          boardingDelta -
+          defaults.transitTime -
+          (state.data.meta.interComplexTransferPenalty ?? defaults.transferTime),
+      );
+
+      return {
+        toIndex,
+        kind: "interchange",
+        boardingDelta,
+        walkDistance,
+        walkPenalty,
+      };
+    });
+  });
+}
+
 function nearestStations(point, count) {
+  const settings = currentTravelSettings();
   return state.data.stations
     .map((station, index) => ({
       index,
       name: station.name,
       walkMinutes:
-        distance(point, station.point) / state.data.meta.accessWalkMetersPerMinute +
+        distance(point, station.point) / settings.walkingSpeed +
         state.data.meta.stationAccessPenalty,
     }))
     .sort((a, b) => a.walkMinutes - b.walkMinutes)
@@ -1156,6 +1338,7 @@ function nearestStations(point, count) {
 }
 
 function runDijkstra(origin) {
+  const settings = currentTravelSettings();
   const stateCount = state.data.routeStates.length;
   const distances = new Array(stateCount).fill(Infinity);
   const visited = new Array(stateCount).fill(false);
@@ -1164,10 +1347,12 @@ function runDijkstra(origin) {
   for (const seed of seeds) {
     for (const routeStateIndex of state.data.stationStates[seed.index] || []) {
       const routeId = state.data.routeStates[routeStateIndex].routeId;
-      const boardWait = state.data.routeWaits[routeId] ?? state.data.meta.defaultBoardWait ?? ENTRY_WAIT_MINUTES;
+      const boardingDelta =
+        (state.data.routeWaits?.[routeId] ?? state.travelSettingsDefaults.transitTime) -
+        state.travelSettingsDefaults.transitTime;
       distances[routeStateIndex] = Math.min(
         distances[routeStateIndex],
-        origin.swimMinutes + seed.walkMinutes + boardWait,
+        origin.swimMinutes + seed.walkMinutes + settings.transitTime + boardingDelta,
       );
     }
   }
@@ -1183,7 +1368,18 @@ function runDijkstra(origin) {
     }
     if (current === -1) break;
     visited[current] = true;
-    for (const [nextIndex, weight] of state.data.adjacency[current]) {
+    for (const edge of state.dynamicAdjacency[current]) {
+      const weight =
+        edge.kind === "ride"
+          ? edge.rideMinutes
+          : edge.kind === "transfer"
+            ? settings.transferTime + settings.transitTime + edge.boardingDelta
+            : edge.walkDistance / settings.walkingSpeed +
+              edge.walkPenalty +
+              settings.transferTime +
+              settings.transitTime +
+              edge.boardingDelta;
+      const nextIndex = edge.toIndex;
       const candidate = distances[current] + weight;
       if (candidate < distances[nextIndex]) distances[nextIndex] = candidate;
     }
@@ -1193,10 +1389,11 @@ function runDijkstra(origin) {
 }
 
 function estimateTravel(origin, originDistances, destinationPoint) {
+  const settings = currentTravelSettings();
   const destination = normalizeTravelPoint(destinationPoint);
   const swimMinutes = origin.swimMinutes + destination.swimMinutes;
   let bestMinutes =
-    distance(origin.point, destination.point) / state.data.meta.walkMetersPerMinute +
+    distance(origin.point, destination.point) / settings.walkingSpeed +
     swimMinutes;
   const nearby = nearestStations(destination.point, state.data.meta.cellNearestStations);
   for (const station of nearby) {
@@ -1257,6 +1454,7 @@ function syncReachabilityScore(summary = null) {
 
 function computeWarp(origin) {
   const { distances, seeds } = runDijkstra(origin);
+  const settings = currentTravelSettings();
   const { gridCols, gridRows, bounds } = state.data.meta;
   const [minX, minY, maxX, maxY] = bounds;
   const spanX = maxX - minX;
@@ -1271,8 +1469,11 @@ function computeWarp(origin) {
     if (cellIndex === -1) continue;
     const cell = state.data.cells[cellIndex];
     let bestMinutes =
-      distance(origin.point, cell.point) / state.data.meta.walkMetersPerMinute + origin.swimMinutes;
-    for (const [stationIndex, egressMinutes] of cell.access) {
+      distance(origin.point, cell.point) / settings.walkingSpeed + origin.swimMinutes;
+    for (const [stationIndex] of cell.access) {
+      const egressMinutes =
+        distance(cell.point, state.data.stations[stationIndex].point) / settings.walkingSpeed +
+        state.data.meta.stationAccessPenalty;
       for (const routeStateIndex of state.data.stationStates[stationIndex] || []) {
         bestMinutes = Math.min(bestMinutes, distances[routeStateIndex] + egressMinutes);
       }
@@ -1585,6 +1786,68 @@ function drawHeatmap(drawCtx, warp, transform, useWarpGeometry = true) {
   drawCtx.restore();
 }
 
+function drawReachabilityOutline(drawCtx, warp, transform, useWarpGeometry = true) {
+  const threshold = currentTravelSettings().maxTransitTime;
+  const { gridCols, gridRows, bounds } = state.data.meta;
+  const [minX, minY, maxX, maxY] = bounds;
+  const cellW = (maxX - minX) / gridCols;
+  const cellH = (maxY - minY) / gridRows;
+  const isReachable = (row, col) =>
+    row >= 0 &&
+    row < gridRows &&
+    col >= 0 &&
+    col < gridCols &&
+    warp.validMask[row][col] &&
+    warp.minutes[row][col] <= threshold;
+
+  const cellCorner = (row, col) => {
+    if (useWarpGeometry) {
+      return warp.warpNodes[row][col];
+    }
+    return [minX + col * cellW, minY + row * cellH];
+  };
+
+  const drawEdge = (start, end) => {
+    const [sx, sy] = transform.toScreen(start);
+    const [ex, ey] = transform.toScreen(end);
+    drawCtx.moveTo(sx, sy);
+    drawCtx.lineTo(ex, ey);
+  };
+
+  drawCtx.save();
+  drawCtx.lineJoin = "round";
+  drawCtx.lineCap = "round";
+
+  drawCtx.beginPath();
+  for (let row = 0; row < gridRows; row += 1) {
+    for (let col = 0; col < gridCols; col += 1) {
+      if (!isReachable(row, col)) continue;
+
+      if (!isReachable(row - 1, col)) {
+        drawEdge(cellCorner(row, col), cellCorner(row, col + 1));
+      }
+      if (!isReachable(row, col + 1)) {
+        drawEdge(cellCorner(row, col + 1), cellCorner(row + 1, col + 1));
+      }
+      if (!isReachable(row + 1, col)) {
+        drawEdge(cellCorner(row + 1, col + 1), cellCorner(row + 1, col));
+      }
+      if (!isReachable(row, col - 1)) {
+        drawEdge(cellCorner(row + 1, col), cellCorner(row, col));
+      }
+    }
+  }
+
+  drawCtx.strokeStyle = "rgba(255, 248, 239, 0.95)";
+  drawCtx.lineWidth = 5;
+  drawCtx.stroke();
+
+  drawCtx.strokeStyle = "rgba(215, 92, 46, 0.98)";
+  drawCtx.lineWidth = 2.5;
+  drawCtx.stroke();
+  drawCtx.restore();
+}
+
 function drawMap(drawCtx, width, height) {
   drawPanelBackground(drawCtx, width, height);
   if (!state.transform) return;
@@ -1681,6 +1944,10 @@ function drawMap(drawCtx, width, height) {
     drawHeatmap(drawCtx, warp, transform, state.showWarp);
   }
 
+  if (state.showReachOutline && warp) {
+    drawReachabilityOutline(drawCtx, warp, transform, state.showWarp);
+  }
+
   const nearest = warp?.seeds?.[0] ?? null;
   const station = nearest ? state.data.stations[nearest.index] : null;
 
@@ -1711,7 +1978,7 @@ function drawMap(drawCtx, width, height) {
     const probe = measureProbeFromWarp(normalizedOrigin, warp, activeProbePoint);
     statusText.textContent = station ? `Pinned near ${station.name}` : "Pinned origin";
     if (probe && activeProbeScreen) {
-      drawHoverTooltip(drawCtx, activeProbeScreen, `${formatTravelBreakdown(probe.baseMinutes, probe.swimMinutes)} away`);
+      drawHoverTooltip(drawCtx, activeProbeScreen, formatDistanceLabel(probe.baseMinutes, probe.swimMinutes));
     }
   } else {
     statusText.textContent = station
@@ -1807,10 +2074,11 @@ function measureProbeFromWarp(normalizedOrigin, warp, probePoint) {
   if (warp?.distances) {
     return estimateTravel(normalizedOrigin, warp.distances, probePoint);
   }
+  const settings = currentTravelSettings();
   const destination = normalizeTravelPoint(probePoint);
   const swimMinutes = normalizedOrigin.swimMinutes + destination.swimMinutes;
   const minutes =
-    distance(normalizedOrigin.point, destination.point) / state.data.meta.walkMetersPerMinute +
+    distance(normalizedOrigin.point, destination.point) / settings.walkingSpeed +
     swimMinutes;
   return {
     minutes,
@@ -1920,7 +2188,7 @@ function exportShareImage() {
         mapX + ((probeScreen[0] - sourceXCss) / sourceSquareCss) * mapSize,
         mapY + ((probeScreen[1] - sourceYCss) / sourceSquareCss) * mapSize,
       ],
-      `${formatTravelBreakdown(probeMeasurement.baseMinutes, probeMeasurement.swimMinutes)} away`,
+      formatDistanceLabel(probeMeasurement.baseMinutes, probeMeasurement.swimMinutes),
     );
   }
 
@@ -1960,6 +2228,7 @@ function exportShareImage() {
   exportCtx.restore();
 
   if (state.showHeatmap) {
+    const maxTransitTime = currentTravelSettings().maxTransitTime;
     const legendWidth = 360;
     const leftLabelWidth = 50;
     const rightLabelWidth = 80;
@@ -1990,7 +2259,7 @@ function exportShareImage() {
     exportCtx.stroke();
 
     exportCtx.textAlign = "right";
-    exportCtx.fillText(`${MAX_TIME_MINUTES}m`, legendX + legendWidth, legendY);
+    exportCtx.fillText(`${Math.round(maxTransitTime)}m`, legendX + legendWidth, legendY);
     exportCtx.textAlign = "left";
   }
 
@@ -2047,6 +2316,13 @@ function setSearchBusy(isBusy) {
 function setAddressInputs(value) {
   for (const ui of searchUis) {
     ui.input.value = value;
+  }
+}
+
+function closeSettingsMenus(exceptMenu = null) {
+  for (const menu of settingsMenus) {
+    if (menu === exceptMenu) continue;
+    menu.open = false;
   }
 }
 
@@ -2215,6 +2491,7 @@ function updatePinGesture(screenPoint, worldPoint, tapSlop) {
 function handleMobilePointerDown(event) {
   if (!state.isMobile) return;
   closeSharePanel();
+  closeSettingsMenus();
   collapseMobileHelp();
   const { screenPoint, worldPoint } = pointerToWorld(event);
   if (!withinBounds(worldPoint)) return;
@@ -2286,6 +2563,7 @@ function handleMobilePointerCancel(event) {
 function handleDesktopPointerDown(event) {
   if (state.isMobile) return;
   closeSharePanel();
+  closeSettingsMenus();
   collapseMobileHelp();
   const { screenPoint, worldPoint } = pointerToWorld(event);
   if (!withinBounds(worldPoint)) return;
@@ -2354,9 +2632,10 @@ function withinBounds(point) {
 }
 
 function syncHeatmapLegend() {
+  const maxTransitTime = currentTravelSettings().maxTransitTime;
   heatmapLegend.hidden = !state.showHeatmap;
   heatmapLegendMin.textContent = "0m";
-  heatmapLegendMax.textContent = `${MAX_TIME_MINUTES}m`;
+  heatmapLegendMax.textContent = `${Math.round(maxTransitTime)}m`;
 }
 
 function syncFullscreenButton() {
@@ -2538,6 +2817,9 @@ function useCurrentLocation() {
 async function init() {
   const response = await fetch(DATA_URL);
   state.data = await response.json();
+  state.travelSettingsDefaults = getTravelSettingsDefaults();
+  state.travelSettings = sanitizeTravelSettings(loadStoredTravelSettings(), state.travelSettingsDefaults);
+  state.dynamicAdjacency = buildDynamicAdjacency();
   state.isMobile = isMobileLayout();
   state.baseMapCache = null;
   state.ready = true;
@@ -2551,7 +2833,8 @@ async function init() {
     Boolean(sharedView.origin) ||
     Boolean(sharedView.probe) ||
     sharedView.warp !== null ||
-    sharedView.heatmap !== null;
+    sharedView.heatmap !== null ||
+    sharedView.outline !== null;
   state.mobileHelpCollapsed = hasSharedViewParams;
   if (sharedView.zoom) {
     state.viewportScale = sharedView.zoom;
@@ -2561,6 +2844,9 @@ async function init() {
   }
   if (sharedView.heatmap !== null) {
     state.showHeatmap = sharedView.heatmap;
+  }
+  if (sharedView.outline !== null) {
+    state.showReachOutline = sharedView.outline;
   }
   if (sharedView.origin) {
     const restoredPoint = lonLatToWorld(sharedView.origin.lon, sharedView.origin.lat);
@@ -2581,6 +2867,8 @@ async function init() {
 
   warpToggle.checked = state.showWarp;
   heatmapToggle.checked = state.showHeatmap;
+  outlineToggle.checked = state.showReachOutline;
+  syncTravelSettingsInputs();
   syncHeatmapLegend();
   syncZoomControls();
 
@@ -2589,6 +2877,50 @@ async function init() {
 
   mobileWarpToggle.checked = state.showWarp;
   mobileHeatmapToggle.checked = state.showHeatmap;
+  mobileOutlineToggle.checked = state.showReachOutline;
+
+  for (const menu of settingsMenus) {
+    menu.addEventListener("toggle", () => {
+      if (menu.open) {
+        closeSharePanel();
+        closeSettingsMenus(menu);
+      }
+    });
+  }
+
+  for (const input of settingsInputs) {
+    input.addEventListener("input", () => {
+      const key = input.dataset.settingKey;
+      const unit = input.dataset.settingUnit;
+      if (!key || !unit) return;
+      const rawValue = Number(input.value);
+      if (!Number.isFinite(rawValue)) {
+        syncTravelSettingsInputs();
+        return;
+      }
+      const current = currentTravelSettings();
+      const nextSettings = {
+        ...current,
+        [key]: unit === "mph" ? mphToMetersPerMinute(rawValue) : rawValue,
+      };
+      applyTravelSettings(nextSettings);
+    });
+  }
+
+  for (const button of settingsResetButtons) {
+    button.addEventListener("click", () => {
+      applyTravelSettings(state.travelSettingsDefaults);
+    });
+  }
+
+  for (const button of settingsSaveButtons) {
+    button.addEventListener("click", () => {
+      const menu = button.closest(".settings-menu");
+      if (menu) {
+        menu.open = false;
+      }
+    });
+  }
 
   mapCanvas.addEventListener("pointerdown", (event) => {
     event.preventDefault();
@@ -2669,18 +3001,38 @@ async function init() {
     requestDraw();
   });
 
+  outlineToggle.addEventListener("change", () => {
+    closeSharePanel();
+    state.showReachOutline = outlineToggle.checked;
+    mobileOutlineToggle.checked = state.showReachOutline;
+    syncBrowserUrl();
+    state.dirty = true;
+    requestDraw();
+  });
+
+  mobileOutlineToggle.addEventListener("change", () => {
+    state.showReachOutline = mobileOutlineToggle.checked;
+    outlineToggle.checked = state.showReachOutline;
+    syncBrowserUrl();
+    state.dirty = true;
+    requestDraw();
+  });
+
   zoomOutButton.addEventListener("click", () => {
     closeSharePanel();
+    closeSettingsMenus();
     setViewportScale(state.viewportScale / VIEWPORT_ZOOM_STEP);
   });
 
   zoomInButton.addEventListener("click", () => {
     closeSharePanel();
+    closeSettingsMenus();
     setViewportScale(state.viewportScale * VIEWPORT_ZOOM_STEP);
   });
 
   fullscreenButton.addEventListener("click", async () => {
     closeSharePanel();
+    closeSettingsMenus();
     try {
       if (document.fullscreenElement === panelCard) {
         await document.exitFullscreen();
@@ -2702,6 +3054,7 @@ async function init() {
 
   shareButton.addEventListener("click", (event) => {
     event.stopPropagation();
+    closeSettingsMenus();
     toggleSharePanel();
   });
 
@@ -2750,14 +3103,25 @@ async function init() {
   }
 
   document.addEventListener("click", (event) => {
-    if (sharePanel.hidden) return;
-    if (sharePanel.contains(event.target) || shareButton.contains(event.target)) return;
-    closeSharePanel();
+    const clickedInsideShare = sharePanel.contains(event.target) || shareButton.contains(event.target);
+    if (!sharePanel.hidden && !clickedInsideShare) {
+      closeSharePanel();
+    }
+
+    const clickedInsideSettings = settingsMenus.some(
+      (menu) => menu.contains(event.target),
+    );
+    if (!clickedInsideSettings) {
+      closeSettingsMenus();
+    }
   });
 
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && !sharePanel.hidden) {
       closeSharePanel();
+    }
+    if (event.key === "Escape") {
+      closeSettingsMenus();
     }
   });
 
