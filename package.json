@@ -3,7 +3,8 @@
   "private": true,
   "scripts": {
     "deploy": "wrangler deploy",
-    "dev": "wrangler dev"
+    "dev": "wrangler dev",
+    "login": "wrangler login"
   },
   "devDependencies": {
     "wrangler": "^4.83.0"
