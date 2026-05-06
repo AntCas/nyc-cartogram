@@ -777,6 +777,7 @@ def main() -> None:
         "routeStyles": route_styles,
     }
 
+    SITE_DATA_PATH.parent.mkdir(parents=True, exist_ok=True)
     SITE_DATA_PATH.write_text(json.dumps(output, separators=(",", ":")), encoding="utf-8")
     print(f"Wrote {SITE_DATA_PATH}")
 
