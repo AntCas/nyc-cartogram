@@ -2746,6 +2746,16 @@ function lonLatToWorld(lon, lat) {
   return [lon * metersPerDegLon, lat * metersPerDegLat];
 }
 
+function dedupeSearchResults(results) {
+  const seen = new Set();
+  return results.filter((result) => {
+    const key = result.title.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 async function searchAddress(query) {
   const params = new URLSearchParams({
     q: `${query}, New York City`,
@@ -2765,12 +2775,14 @@ async function searchAddress(query) {
     throw new Error(`Search failed with status ${response.status}`);
   }
   const payload = await response.json();
-  return payload.map((item) => ({
-    title: item.display_name.split(",").slice(0, 2).join(",").trim(),
-    subtitle: item.display_name,
-    lat: Number(item.lat),
-    lon: Number(item.lon),
-  }));
+  return dedupeSearchResults(
+    payload.map((item) => ({
+      title: item.display_name.split(",").slice(0, 2).join(",").trim(),
+      subtitle: item.display_name,
+      lat: Number(item.lat),
+      lon: Number(item.lon),
+    })),
+  );
 }
 
 function setLocateButtonsBusy(isBusy) {
