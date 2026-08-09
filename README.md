@@ -1,3 +1,5 @@
+
+
 # NYC Cartogram
 
 This project generates two related artifacts for New York City:
@@ -103,8 +105,8 @@ pnpm run deploy
 
 This repo includes:
 
-- [wrangler.jsonc](/Users/primaryuser/Desktop/nyc-projection/wrangler.jsonc) to bundle the `site/` directory as Worker assets
-- [src/worker.js](/Users/primaryuser/Desktop/nyc-projection/src/worker.js) to serve the app from the `/nyc` path prefix on `castrio.me`
+- [wrangler.jsonc](wrangler.jsonc) to bundle the `site/` directory as Worker assets
+- [src/worker.js](src/worker.js) to serve the app from the `/nyc` path prefix on `castrio.me`
 
 Deployment behavior:
 
@@ -117,13 +119,13 @@ If this is your first local `pnpm` install and Wrangler postinstall steps were b
 
 ## Project Layout
 
-- [generate_nyc_subway_weighted_projection.py](/Users/primaryuser/Desktop/nyc-projection/generate_nyc_subway_weighted_projection.py): builds the static SVG cartogram
-- [build_commute_site_data.py](/Users/primaryuser/Desktop/nyc-projection/build_commute_site_data.py): builds the interactive site data bundle
-- [site/index.html](/Users/primaryuser/Desktop/nyc-projection/site/index.html): app shell and metadata
-- [site/app.js](/Users/primaryuser/Desktop/nyc-projection/site/app.js): interactive map, search, sharing, and rendering logic
-- [site/styles.css](/Users/primaryuser/Desktop/nyc-projection/site/styles.css): site styles
-- [site/data/commute_map_data.json](/Users/primaryuser/Desktop/nyc-projection/site/data/commute_map_data.json): generated site dataset
-- [src/worker.js](/Users/primaryuser/Desktop/nyc-projection/src/worker.js): Cloudflare Worker entrypoint
+- [generate_nyc_subway_weighted_projection.py](generate_nyc_subway_weighted_projection.py): builds the static SVG cartogram
+- [build_commute_site_data.py](build_commute_site_data.py): builds the interactive site data bundle
+- [site/index.html](site/index.html): app shell and metadata
+- [site/app.js](site/app.js): interactive map, search, sharing, and rendering logic
+- [site/styles.css](site/styles.css): site styles
+- [site/data/commute_map_data.json](site/data/commute_map_data.json): generated site dataset
+- [src/worker.js](src/worker.js): Cloudflare Worker entrypoint
 
 ## Current App Behavior
 
