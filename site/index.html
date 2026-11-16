@@ -3,10 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Copenhagen Commute POV | Travel Time Map</title>
+    <title>Commute POV | Travel Time Map</title>
     <meta
       name="description"
-      content="Explore Copenhagen by door-to-door travel time on foot, by bike, and by Metro, S-tog, light rail, and train."
+      content="Explore Copenhagen and Stockholm by door-to-door travel time on foot, by bike, and by metro, train, tram, bus, and boat."
     />
     <script>
       (function () {
@@ -29,11 +29,15 @@
   </head>
   <body>
     <main class="app">
-      <canvas id="mapCanvas" aria-label="Heatmap of Copenhagen by travel time"></canvas>
+      <canvas id="mapCanvas" aria-label="Heatmap of the city by travel time"></canvas>
 
       <section class="panel brand-panel" aria-label="Search and status">
         <p class="eyebrow">Travel time map</p>
-        <h1>Copenhagen</h1>
+        <h1 class="city-title">
+          <select id="citySelect" class="city-select" aria-label="City" title="Switch city">
+            <option>&nbsp;</option>
+          </select>
+        </h1>
         <p id="statusText" class="status-text">Loading the street and transit network…</p>
         <form id="searchForm" class="search-row" autocomplete="off">
           <input id="addressInput" name="address" type="text" placeholder="Start from an address…" />
@@ -122,7 +126,7 @@
       <details id="credits" class="credits">
         <summary aria-label="Data sources and credits" title="Data sources and credits">i</summary>
         <p>
-          Times: Rejseplanen GTFS (typical weekday) + OpenStreetMap walk/bike network. Map data ©
+          Times: <span id="transitSource">Rejseplanen GTFS</span> (typical weekday) + OpenStreetMap walk/bike network. Map data ©
           <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap contributors</a>.
           Adapted from
           <a href="https://github.com/AntCas/nyc-cartogram/tree/main" target="_blank" rel="noreferrer">NYC Commute POV</a>

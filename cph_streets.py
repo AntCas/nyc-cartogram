@@ -1,4 +1,4 @@
-"""Build a routable walk/bike street graph from the raw OSM extract in data/cph_street_network.json.
+"""Build a routable walk/bike street graph from a city's raw OSM extract (data/<prefix>_street_network.json).
 
 Every OSM way is classified for walking and cycling (per direction for cycling, since one-way
 streets apply to bikes unless contraflow is allowed). Ways are split at junctions and each
@@ -13,9 +13,6 @@ import math
 from collections import Counter
 from pathlib import Path
 from typing import Callable, Dict, List, Tuple
-
-ROOT = Path(__file__).resolve().parent
-STREET_NETWORK_PATH = ROOT / "data" / "cph_street_network.json"
 
 MAX_EDGE_METERS = 20.0
 
@@ -69,8 +66,8 @@ def classify_way(tags: Dict[str, str]) -> Tuple[bool, bool, bool]:
     return walk, forward, backward
 
 
-def build_street_graph(project: Callable[[float, float], Point]) -> dict:
-    payload = json.loads(STREET_NETWORK_PATH.read_text(encoding="utf-8"))
+def build_street_graph(path: Path, project: Callable[[float, float], Point]) -> dict:
+    payload = json.loads(path.read_text(encoding="utf-8"))
     coords: Dict[int, Point] = {}
     ways = []
     for element in payload["elements"]:

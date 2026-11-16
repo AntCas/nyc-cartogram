@@ -1,20 +1,29 @@
-# Copenhagen Travel Time Map
+# Copenhagen & Stockholm Travel Time Map
 
-A door-to-door travel-time map of central Copenhagen, adapted from Anthony Castrio's
+A door-to-door travel-time map of Copenhagen and Stockholm, adapted from Anthony Castrio's
 [NYC Commute POV](https://github.com/AntCas/nyc-cartogram). It produces:
 
-- a full-screen interactive web app (desktop): drop a start pin and see a heatmap of how long it takes
-  to get everywhere else on foot, by bike, and by transit, measure the time to any spot, switch modes
-  on and off, and share links to a view
-- a static SVG cartogram (the original warp idea) that expands places with good rail access
+- a full-screen interactive web app (desktop): pick a city, drop a start pin, and see a heatmap of how
+  long it takes to get everywhere else on foot, by bike, and by transit, measure the time to any spot,
+  switch modes on and off, and share links to a view
+- a static SVG cartogram (the original warp idea, Copenhagen only) that expands places with good rail
+  access
+
+The city is chosen with the selector in the title of the top-left panel. Each city is a separate data set
+under `site/data/<city>/`, described by one entry in `cities.py`; switching reloads the app on the other
+city. Links remember the city: Copenhagen links are unchanged (`/@55.68,12.57`), Stockholm links carry
+`?city=stockholm`, and a shared pin always opens the city it lies in.
 
 ## Coverage
 
-Travel times are computed on a 50 m grid over the 17 municipalities of Byen København and Københavns
-omegn (København, Frederiksberg, Tårnby, Dragør, Gentofte, Gladsaxe, Lyngby-Taarbæk, Herlev, Ballerup,
-Rødovre, Hvidovre, Glostrup, Brøndby, Albertslund, Vallensbæk, Ishøj, Høje-Taastrup). The app opens framed
-on central Copenhagen out to Rødovre (`INITIAL_VIEW_BBOX` in `build_commute_site_data.py`); pan and zoom
-to see the rest.
+Travel times are computed on a 50 m grid. The app opens framed on the central city (`initial_view_bbox`
+in `cities.py`); pan and zoom to see the rest.
+
+### Copenhagen
+
+The 17 municipalities of Byen København and Københavns omegn (København, Frederiksberg, Tårnby, Dragør,
+Gentofte, Gladsaxe, Lyngby-Taarbæk, Herlev, Ballerup, Rødovre, Hvidovre, Glostrup, Brøndby, Albertslund,
+Vallensbæk, Ishøj, Høje-Taastrup).
 
 Modes (each can be switched on/off in the options box):
 
@@ -28,14 +37,37 @@ Modes (each can be switched on/off in the options box):
 | Harbour bus | Movia 991/992/993 | on |
 | Bus | Movia buses and S-buses with daytime service (~96 routes, ~2,000 stops); night buses and rail-replacement buses are left out | on |
 
+### Stockholm
+
+Nine municipalities: Stockholm (including Kista, Vällingby, Farsta, and the rest of the city), Solna,
+Sundbyberg, Danderyd, Lidingö, Nacka, Sollentuna, Järfälla, and Huddinge. Timetables are SL's (Storstockholms
+Lokaltrafik) GTFS Regional feed; only SL's own lines are modelled.
+
+| Mode | Lines | Default |
+| --- | --- | --- |
+| Bike | the OSM cycling network; the bike comes along on the pendeltåg and commuter boats only | off |
+| Tunnelbana | T10, T11 (blue), T13, T14 (red), T17, T18, T19 (green) | on |
+| Pendeltåg | SL commuter trains (40, 41, 43, …) | on |
+| Tram & local rail | Tvärbanan (30, 31), Spårväg City (7), Nockebybanan (12), Lidingöbanan (21), Saltsjöbanan (25, 26), Roslagsbanan (27, 28, 29) | on |
+| Commuter boat | SL pendelbåtar (80, 82, 84, 89) | on |
+| Bus | SL buses with daytime service; night buses and Närtrafiken are left out | on |
+
+Not modelled in Stockholm: long-distance and regional trains (SJ, Mälartåg), Arlanda Express, and the
+Waxholmsbolaget archipelago boats, which aren't SL lines. Swedish municipal boundaries run across open
+water, so the sea is cut out along OpenStreetMap's coastline (`coastline.py`) and Lake Mälaren along its
+lake polygons.
+
 Walking is always available. Bus times are scheduled times, so rush-hour traffic isn't reflected.
 
 ## Quick Start (fresh clone)
 
 ```bash
-python3 setup_data.py      # downloads GTFS + OSM street network, builds site/data (~10–20 min)
+python3 setup_data.py      # both cities: downloads GTFS + OSM street networks, builds site/data (~30–40 min)
 python3 serve.py 8080      # then open http://localhost:8080/
 ```
+
+`python3 setup_data.py --city copenhagen` (or `--city stockholm`) sets up just one city; the selector
+only lists cities whose data has been built.
 
 The large inputs (the GTFS feed and the OSM street network) and the generated site data are not in git;
 `setup_data.py` recreates them and can simply be re-run if a download fails. `CLAUDE.md` has detailed
@@ -44,28 +76,34 @@ setup, verification, and troubleshooting notes (written so a Claude agent can do
 ## Requirements
 
 - Python 3.10+ (standard library only)
-- Internet access for the first setup (Rejseplanen GTFS feed and the OpenStreetMap Overpass API)
+- Internet access for the first setup (the Rejseplanen and SL GTFS feeds and the OpenStreetMap Overpass
+  API). The SL feed is downloaded from the Mobility Database's daily mirror, so no Trafiklab API key is
+  needed.
 - `pnpm` and Node.js only if you want to run or deploy the Cloudflare Worker
 
 ## Build (step by step)
 
-`setup_data.py` runs these for you:
+`setup_data.py` runs these for you. Each takes `--city copenhagen` (the default) or `--city stockholm`:
 
 ```bash
-# 1. OpenStreetMap layers via Overpass: municipalities, parks, water, major streets, and the full
-#    walk/bike street network (~73 MB, fetched in tiles). Cached in data/; add --force to refresh.
-python3 fetch_cph_basemap.py
+# 1. OpenStreetMap layers via Overpass: municipalities, parks, water, major streets, the full
+#    walk/bike street network (fetched in tiles), and for Stockholm the coastline. Cached in data/
+#    as cph_* / sto_*; add --force to refresh.
+python3 fetch_cph_basemap.py --city stockholm
 
-# 2. Site data -> site/data/commute_map_data.json + site/data/street_graph.bin
-python3 build_commute_site_data.py
+# 2. Site data -> site/data/<city>/commute_map_data.json + street_graph.bin, and site/data/cities.json
+#    (the selector's list). --all builds every city.
+python3 build_commute_site_data.py --city stockholm
 
-# 3. (optional) Static SVG -> output/cph_transit_weighted_projection.svg
+# 3. (optional, Copenhagen only) Static SVG -> output/cph_transit_weighted_projection.svg
 python3 generate_cph_transit_weighted_projection.py
 ```
 
-`cph_transit.py` filters the national GTFS feed down to the Copenhagen rail, bus, and harbour-bus network and
-caches it in `data/cph_transit_network.json`; the cache is rebuilt automatically when `GTFS/` changes.
-`cph_streets.py` turns the raw OSM extract into the routable street graph.
+`cph_transit.py` filters a city's GTFS feed (`GTFS/` for Copenhagen, `GTFS-stockholm/` for Stockholm) down
+to the modelled network and caches it in `data/<prefix>_transit_network.json`; the cache is rebuilt
+automatically when the feed changes. `cph_streets.py` turns the raw OSM extract into the routable street
+graph. `cities.py` holds everything that differs between the cities: data sources, municipalities,
+bounding boxes, modes and line colours, and how GTFS routes map to modes.
 
 ## Run Locally
 
@@ -121,7 +159,8 @@ Moves between them:
 - **Street legs** are walked at 4.8 km/h or, with Bike on, ridden at 16 km/h (the usual journey-planner
   assumptions, as used by Google Maps). On walk-only edges you push the bike at walking speed.
 - **Boarding** from a station's street node costs the walk/ride to the platform, a per-mode platform access
-  time (Metro/regional 2 min, S-tog 1.5, Letbane/harbour bus 0.5, bus 0.3; +0.5–1 min with a bike), and the
+  time (Copenhagen: Metro/regional 2 min, S-tog 1.5, Letbane/harbour bus 0.5, bus 0.3; Stockholm:
+  tunnelbana/pendeltåg 2.5, tram/boat 0.5, bus 0.3; +0.5–1 min with a bike), and the
   line's expected wait for a departure (half its 07:00–19:00 headway, 1.5–15 min). **Alighting** costs the
   same minus the wait.
 - **Transfers** inside a station use the minimum platform-to-platform times from GTFS `transfers.txt`
@@ -134,8 +173,10 @@ Moves between them:
 - **Water** (OSM lakes, ponds, canals, and harbour basins, e.g. Søerne) is cut out of the grid and the
   heatmap, so you can only cross it where the street network has a bridge.
 
-With Bike on, the bike comes along on every transit leg. In reality bikes are not allowed on the Metro on
-weekdays 07–09 and 15:30–17:30, and need a ticket on regional trains.
+With Bike on, the bike comes along on every transit leg that takes bikes (`no_bike_modes` in `cities.py`
+lists the modes that don't). In reality bikes are not allowed on the Copenhagen Metro on weekdays 07–09
+and 15:30–17:30 and need a ticket on regional trains, and Stockholm's pendeltåg only takes them outside
+rush hours.
 
 Some UI/share icons are from [Iconmonstr](https://iconmonstr.com/).
 

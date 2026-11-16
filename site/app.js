@@ -1,5 +1,7 @@
-const DATA_URL = new URL("./data/commute_map_data.json", import.meta.url).toString();
-const GRAPH_URL = new URL("./data/street_graph.bin", import.meta.url).toString();
+// Each city's data lives in ./data/<city id>/; cities.json lists the cities that have been built.
+const CITIES_URL = new URL("./data/cities.json", import.meta.url).toString();
+const cityDataUrl = (cityId, file) => new URL(`./data/${cityId}/${file}`, import.meta.url).toString();
+const CITY_STORAGE_KEY = "commute-map-city-v1";
 const DEFAULT_MAX_TIME_MINUTES = 30;
 const MIN_VIEWPORT_SCALE = 1;
 const MAX_VIEWPORT_SCALE = 16;
@@ -26,6 +28,7 @@ const DEFAULT_DISABLED_MODES = ["bike"];
 const SHARE_COORDINATE_DECIMALS = 5;
 const METERS_PER_MINUTE_PER_KMH = 1000 / 60;
 const SETTINGS_STORAGE_KEY = "cph-cartogram-settings-v2";
+// Mode ids differ per city, so every city but the first (Copenhagen) gets its own key.
 const MODES_STORAGE_KEY = "cph-cartogram-modes-v1";
 const DISABLED_ROUTE_ALPHA = 0.16;
 const WATER_COLOR = "#d9e6ee";
@@ -34,6 +37,8 @@ const ROUTE_SHAPE_SNAP_METERS = 400;
 const SHORT_STREET_LEG_METERS = 150;
 
 const state = {
+  cities: [],
+  city: null,
   data: null,
   graph: null,
   ready: false,
@@ -70,6 +75,8 @@ const state = {
 const mapCanvas = document.getElementById("mapCanvas");
 const ctx = mapCanvas.getContext("2d");
 const statusText = document.getElementById("statusText");
+const citySelect = document.getElementById("citySelect");
+const transitSource = document.getElementById("transitSource");
 const searchForm = document.getElementById("searchForm");
 const addressInput = document.getElementById("addressInput");
 const searchButton = document.getElementById("searchButton");
@@ -583,9 +590,13 @@ function bikeEnabled() {
   return Boolean(state.enabledModes?.has("bike"));
 }
 
+function modesStorageKey() {
+  return isDefaultCity() ? MODES_STORAGE_KEY : `${MODES_STORAGE_KEY}-${state.city.id}`;
+}
+
 function loadStoredModes() {
   try {
-    const raw = window.localStorage.getItem(MODES_STORAGE_KEY);
+    const raw = window.localStorage.getItem(modesStorageKey());
     return raw ? JSON.parse(raw) : null;
   } catch (error) {
     console.error(error);
@@ -595,7 +606,7 @@ function loadStoredModes() {
 
 function persistModes() {
   try {
-    window.localStorage.setItem(MODES_STORAGE_KEY, JSON.stringify([...state.enabledModes]));
+    window.localStorage.setItem(modesStorageKey(), JSON.stringify([...state.enabledModes]));
   } catch (error) {
     console.error(error);
   }
@@ -825,14 +836,16 @@ function computeTravelField(originPoint) {
 
   const boardCost = new Float32Array(routeStates.length);
   const alightCost = new Float32Array(routeStates.length);
+  const noBikeModes = meta.noBikeModes ?? ["bus"];
   routeStates.forEach((routeState, index) => {
     const platform =
       (meta.stationAccessMinutes[routeState.mode] ?? 1.5) + (bike ? meta.bikeStationExtraMinutes[routeState.mode] ?? 1 : 0);
     alightCost[index] = routeState.linkMeters / streetSpeed + platform;
-    // Movia doesn't take bikes on buses, so with the bike on they can't be boarded. Rides are timed
-    // from arrival at each station, so the line's dwell there comes off the wait for its departure.
+    // Some modes don't take bikes (buses; in Stockholm also the tunnelbana and trams), so with the
+    // bike on they can't be boarded. Rides are timed from arrival at each station, so the line's
+    // dwell there comes off the wait for its departure.
     boardCost[index] =
-      bike && routeState.mode === "bus"
+      bike && noBikeModes.includes(routeState.mode)
         ? Infinity
         : alightCost[index] + Math.max(0, (routeWaits[routeState.routeId] ?? 4) - (routeState.dwell ?? 0));
   });
@@ -1531,6 +1544,40 @@ function drawMarker(drawCtx, screenPoint, color, glowRadius, radius, glowAlpha =
   drawCtx.stroke();
 }
 
+// A fixed teardrop pin on each station listed in meta.landmarkStations (rail over bus).
+function drawLandmarkPins(drawCtx, projectPoint) {
+  const names = state.data.meta.landmarkStations ?? [];
+  for (const name of names) {
+    const matches = state.data.stations.filter((station) => station.name === name);
+    const station = matches.find((s) => !s.modes.every((mode) => mode === "bus")) ?? matches[0];
+    if (!station) continue;
+    const [sx, sy] = projectPoint(station.point);
+    const r = 8;
+    const cy = sy - 22;
+    drawCtx.save();
+    drawCtx.shadowColor = "rgba(23, 48, 77, 0.35)";
+    drawCtx.shadowBlur = 5;
+    drawCtx.shadowOffsetY = 2;
+    drawCtx.beginPath();
+    drawCtx.moveTo(sx, sy);
+    drawCtx.bezierCurveTo(sx - 3, cy + r + 2, sx - r, cy + r * 0.6, sx - r, cy);
+    drawCtx.arc(sx, cy, r, Math.PI, 0);
+    drawCtx.bezierCurveTo(sx + r, cy + r * 0.6, sx + 3, cy + r + 2, sx, sy);
+    drawCtx.closePath();
+    drawCtx.fillStyle = "#c2263f";
+    drawCtx.fill();
+    drawCtx.shadowColor = "transparent";
+    drawCtx.lineWidth = 1.5;
+    drawCtx.strokeStyle = "#fff7ef";
+    drawCtx.stroke();
+    drawCtx.beginPath();
+    drawCtx.arc(sx, cy, 3, 0, Math.PI * 2);
+    drawCtx.fillStyle = "#fff7ef";
+    drawCtx.fill();
+    drawCtx.restore();
+  }
+}
+
 function drawHoverTooltip(drawCtx, screenPoint, label) {
   const [sx, sy] = screenPoint;
   drawCtx.save();
@@ -1620,7 +1667,7 @@ function exportShareImage() {
 
   exportCtx.fillStyle = "#17304d";
   exportCtx.font = '700 58px "Avenir Next", "Helvetica Neue", Helvetica, sans-serif';
-  exportCtx.fillText("Copenhagen", 72, 146);
+  exportCtx.fillText(state.city.name, 72, 146);
 
   const field = state.currentRender?.field ?? null;
   const nearestStationName =
@@ -1725,12 +1772,12 @@ function exportShareImage() {
 
   exportCtx.fillStyle = "#17304d";
   exportCtx.font = '700 24px "Avenir Next", "Helvetica Neue", Helvetica, sans-serif';
-  exportCtx.fillText("Copenhagen Commute POV", 72, 1202);
+  exportCtx.fillText(`${state.city.name} Commute POV`, 72, 1202);
 
   exportCtx.textAlign = "right";
   exportCtx.fillStyle = "#5f6f7f";
   exportCtx.font = '500 12px "Avenir Next", "Helvetica Neue", Helvetica, sans-serif';
-  exportCtx.fillText("Data: Rejseplanen GTFS, OpenStreetMap", 1008, 1202);
+  exportCtx.fillText(`Data: ${state.data.meta.transitSource ?? "GTFS"}, OpenStreetMap`, 1008, 1202);
   exportCtx.textAlign = "left";
 
   return exportCanvas;
@@ -1748,8 +1795,8 @@ async function searchAddress(query) {
     q: query,
     format: "jsonv2",
     addressdetails: "1",
-    countrycodes: "dk",
-    "accept-language": "da,en",
+    countrycodes: state.data.meta.countryCodes ?? "dk",
+    "accept-language": state.data.meta.searchLanguages ?? "da,en",
     limit: "5",
     bounded: "1",
     viewbox: searchViewbox(),
@@ -1781,7 +1828,7 @@ function fitScale(box, width, height) {
   return Math.min((width - MAP_PADDING * 2) / (box[2] - box[0]), (height - MAP_PADDING * 2) / (box[3] - box[1]));
 }
 
-// Opening view: central Copenhagen out to Rødovre, fitted to the window.
+// Opening view: the central city (meta.initialView), fitted to the window.
 function initialViewport() {
   const { width, height } = canvasSize();
   const { bounds, initialView } = state.data.meta;
@@ -1953,6 +2000,7 @@ function drawMap(drawCtx, width, height) {
   }
   drawStations(drawCtx, projectPoint);
   drawMunicipalityLabels(drawCtx, projectPoint);
+  drawLandmarkPins(drawCtx, projectPoint);
 
   const station = field && field.nearestStationIndex !== null ? state.data.stations[field.nearestStationIndex] : null;
   const summary = currentOriginSummary(station?.name ?? null);
@@ -2127,6 +2175,8 @@ function scheduleUrlSync() {
 
 function buildViewUrlFragment() {
   const params = new URLSearchParams();
+  // Links to the first city stay as they always were; other cities are named in the link.
+  if (!isDefaultCity()) params.set("city", state.city.id);
   if (isLocalStaticDev() && state.originPoint) {
     params.set("origin", formatCoordinatePair(state.originPoint));
   }
@@ -2175,7 +2225,7 @@ function renderModeToggles() {
         <label class="mode-chip" title="${escapeHtml(mode.label)}">
           <input type="checkbox" data-mode-toggle="${escapeHtml(mode.id)}" />
           <span class="mode-swatch" style="background: ${modeSwatchBackground(mode.id)}"></span>
-          <span>${escapeHtml(mode.label.replace(/ (trains|bus)$/, ""))}</span>
+          <span>${escapeHtml(mode.short ?? mode.label.replace(/ (trains|bus)$/, ""))}</span>
         </label>
       `,
     )
@@ -2199,7 +2249,7 @@ function setSearchMeta(text) {
 function renderSearchResults(results) {
   searchResults.innerHTML = "";
   if (!results.length) {
-    setSearchMeta("No matching addresses in the Copenhagen area.");
+    setSearchMeta(`No matching addresses in the ${state.city.name} area.`);
     return;
   }
   setSearchMeta("");
@@ -2274,7 +2324,7 @@ async function downloadShareImage() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `cph-travel-time-${Date.now()}.png`;
+    link.download = `${isDefaultCity() ? "cph" : state.city.id}-travel-time-${Date.now()}.png`;
     link.click();
     URL.revokeObjectURL(url);
   } finally {
@@ -2282,12 +2332,109 @@ async function downloadShareImage() {
   }
 }
 
+// ---------- cities ----------
+
+function isDefaultCity() {
+  return !state.city || state.city.id === state.cities[0]?.id;
+}
+
+function cityContaining(coordinate) {
+  if (!coordinate) return null;
+  return (
+    state.cities.find(({ lonLatBounds: [west, south, east, north] }) =>
+      coordinate.lon >= west && coordinate.lon <= east && coordinate.lat >= south && coordinate.lat <= north,
+    ) ?? null
+  );
+}
+
+function loadStoredCityId() {
+  try {
+    return window.localStorage.getItem(CITY_STORAGE_KEY);
+  } catch (error) {
+    console.error(error);
+    return null;
+  }
+}
+
+function persistCityId(cityId) {
+  try {
+    window.localStorage.setItem(CITY_STORAGE_KEY, cityId);
+  } catch (error) {
+    console.error(error);
+  }
+}
+
+// The city comes from the link (?city=…, or whichever city the shared pin or view falls in),
+// else the city used last time, else the first one listed.
+function chooseCity() {
+  const byId = (cityId) => state.cities.find((city) => city.id === cityId) ?? null;
+  const searchParams = new URLSearchParams(window.location.search);
+  const shared = parseSharedView();
+  return (
+    byId(searchParams.get("city")) ??
+    cityContaining(shared.origin) ??
+    cityContaining(shared.view) ??
+    byId(loadStoredCityId()) ??
+    state.cities[0]
+  );
+}
+
+function renderCitySelector() {
+  citySelect.innerHTML = state.cities
+    .map((city) => `<option value="${escapeHtml(city.id)}">${escapeHtml(city.name)}</option>`)
+    .join("");
+  citySelect.value = state.city.id;
+  citySelect.disabled = state.cities.length < 2;
+  citySelect.addEventListener("change", () => {
+    // Each city is its own data set (street graph, grid, modes), so switching reloads the app
+    // on the other city's opening view; pins don't carry over.
+    persistCityId(citySelect.value);
+    const target = new URL(isLocalStaticDev() ? window.location.pathname : getBasePath(), window.location.origin);
+    target.searchParams.set("city", citySelect.value);
+    window.location.assign(target);
+  });
+}
+
+function applyCityText() {
+  const { name } = state.city;
+  document.title = `${name} Commute POV | Travel Time Map`;
+  mapCanvas.setAttribute("aria-label", `Heatmap of ${name} by travel time`);
+  if (transitSource && state.data.meta.transitSource) transitSource.textContent = state.data.meta.transitSource;
+}
+
 // ---------- startup ----------
 
 async function init() {
-  const [dataResponse, graphResponse] = await Promise.all([fetch(DATA_URL), fetch(GRAPH_URL)]);
+  const citiesResponse = await fetch(CITIES_URL);
+  if (!citiesResponse.ok) throw new Error(`Could not load the city list (${citiesResponse.status})`);
+  state.cities = (await citiesResponse.json()).cities;
+  if (!state.cities.length) throw new Error("No city data has been built");
+  state.city = chooseCity();
+  persistCityId(state.city.id);
+  renderCitySelector();
+
+  // A large street graph comes in several files (see MAX_GRAPH_FILE_BYTES in the build script).
+  const graphFiles = state.city.graphFiles ?? ["street_graph.bin"];
+  const [dataResponse, ...graphResponses] = await Promise.all(
+    ["commute_map_data.json", ...graphFiles].map((file) => fetch(cityDataUrl(state.city.id, file))),
+  );
+  if (!dataResponse.ok || graphResponses.some((response) => !response.ok)) {
+    throw new Error(`Could not load the ${state.city.name} data`);
+  }
   state.data = await dataResponse.json();
-  state.graph = loadStreetGraph(await graphResponse.arrayBuffer());
+  applyCityText();
+  const graphParts = await Promise.all(graphResponses.map((response) => response.arrayBuffer()));
+  let graphBuffer = graphParts[0];
+  if (graphParts.length > 1) {
+    const joined = new Uint8Array(graphParts.reduce((total, part) => total + part.byteLength, 0));
+    let offset = 0;
+    for (const part of graphParts) {
+      joined.set(new Uint8Array(part), offset);
+      offset += part.byteLength;
+    }
+    graphBuffer = joined.buffer;
+  }
+  state.graph = loadStreetGraph(graphBuffer);
   state.travelSettingsDefaults = getTravelSettingsDefaults();
   state.travelSettings = sanitizeTravelSettings(loadStoredTravelSettings(), state.travelSettingsDefaults);
   state.ready = true;
@@ -2427,7 +2574,7 @@ async function init() {
     const query = addressInput.value.trim();
     searchResults.innerHTML = "";
     if (!query) {
-      setSearchMeta("Type an address in the Copenhagen area.");
+      setSearchMeta(`Type an address in the ${state.city.name} area.`);
       return;
     }
     searchButton.disabled = true;

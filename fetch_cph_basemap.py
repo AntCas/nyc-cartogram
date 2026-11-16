@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
-"""Download the Copenhagen basemap layers from OpenStreetMap (Overpass API).
+"""Download a city's basemap layers from OpenStreetMap (Overpass API).
 
-Writes, under data/:
-  cph_municipalities.geojson  the 17 municipalities that make up the mapped area
+  python3 fetch_cph_basemap.py [--city copenhagen|stockholm] [--force]
+
+Writes, under data/ (shown with Copenhagen's "cph" prefix; see cities.py):
+  cph_municipalities.geojson  the municipalities that make up the mapped area
   cph_external_land.geojson   neighbouring municipalities (context land outside the map area)
   cph_parks.geojson           parks, forests, and other large green space
   osm_major_streets.json      motorway / trunk / primary roads (raw Overpass JSON)
   cph_street_network.json     every walkable/bikeable way in the area (raw Overpass JSON)
   cph_water.geojson           lakes, ponds, and canals inside the land area (e.g. Søerne)
+  sto_coastline.json          natural=coastline ways (only for cities whose municipal boundaries
+                              extend over the sea, i.e. Stockholm)
 
 Existing files are kept; pass --force to re-download.
 """
@@ -23,55 +27,17 @@ import urllib.request
 from pathlib import Path
 from typing import Dict, List, Sequence, Tuple
 
-ROOT = Path(__file__).resolve().parent
-DATA_DIR = ROOT / "data"
+from cities import DATA_DIR, City, city_from_argv
 
-MUNICIPALITIES_PATH = DATA_DIR / "cph_municipalities.geojson"
-EXTERNAL_LAND_PATH = DATA_DIR / "cph_external_land.geojson"
-PARKS_PATH = DATA_DIR / "cph_parks.geojson"
-STREETS_PATH = DATA_DIR / "osm_major_streets.json"
-STREET_NETWORK_PATH = DATA_DIR / "cph_street_network.json"
-WATER_PATH = DATA_DIR / "cph_water.geojson"
+# How far beyond the mapped municipalities the app draws context (neighbouring land and the sea).
+CONTEXT_MARGIN_METERS = 15_000.0
 
 OVERPASS_ENDPOINTS = (
     "https://overpass-api.de/api/interpreter",
     "https://overpass.kumi.systems/api/interpreter",
     "https://overpass.private.coffee/api/interpreter",
 )
-USER_AGENT = "cph-cartogram-build/1.0"
-
-# Byen København + Københavns omegn (Statistics Denmark's "landsdele").
-MAP_MUNICIPALITIES = (
-    "Københavns Kommune",
-    "Frederiksberg Kommune",
-    "Tårnby Kommune",
-    "Dragør Kommune",
-    "Gentofte Kommune",
-    "Gladsaxe Kommune",
-    "Lyngby-Taarbæk Kommune",
-    "Herlev Kommune",
-    "Ballerup Kommune",
-    "Rødovre Kommune",
-    "Hvidovre Kommune",
-    "Glostrup Kommune",
-    "Brøndby Kommune",
-    "Albertslund Kommune",
-    "Vallensbæk Kommune",
-    "Ishøj Kommune",
-    "Høje-Taastrup Kommune",
-)
-
-# south, west, north, east
-BOUNDARY_BBOX = (55.45, 11.95, 55.95, 12.75)
-DETAIL_BBOX = (55.54, 12.12, 55.84, 12.72)
-# All 17 mapped municipalities plus a margin, so routes that briefly leave the area still exist.
-# Fetched as a grid of tiles; one request for the whole area tends to time out.
-STREET_NETWORK_BBOX = (55.550, 12.160, 55.830, 12.720)
-STREET_NETWORK_TILES = (3, 4)  # rows, cols
-# Drop Saltholm/Peberholm and the harbour forts: islands east of this longitude
-# are uninhabited and only stretch the map bounds.
-MAX_POLYGON_LON = 12.70
-MIN_MUNICIPALITY_POLYGON_M2 = 40_000.0
+USER_AGENT = "osm-basemap-build/1.0"
 
 Point = Tuple[float, float]
 Ring = List[Point]
@@ -201,40 +167,39 @@ def write_geojson(path: Path, features: List[dict]) -> None:
     print(f"Wrote {path} ({len(features)} features)")
 
 
-def fetch_municipalities(force: bool) -> None:
-    if MUNICIPALITIES_PATH.exists() and EXTERNAL_LAND_PATH.exists() and not force:
+def fetch_municipalities(city: City, force: bool) -> None:
+    if city.municipalities_path.exists() and city.external_land_path.exists() and not force:
         return
     print("Fetching municipality boundaries…")
     payload = overpass(
-        f'[out:json][timeout:240];relation["boundary"="administrative"]["admin_level"="7"]{bbox_clause(BOUNDARY_BBOX)};out geom;'
+        f'[out:json][timeout:180];relation["boundary"="administrative"]["admin_level"="7"]{bbox_clause(city.boundary_bbox)};out geom;'
     )
     inside, outside = [], []
     for element in payload["elements"]:
         name = element.get("tags", {}).get("name", "")
         polygons = element_to_polygons(element)
-        if name in MAP_MUNICIPALITIES:
+        if name in city.municipalities:
             polygons = [
                 polygon
                 for polygon in polygons
-                if ring_area_m2(polygon[0]) >= MIN_MUNICIPALITY_POLYGON_M2
-                and min(lon for lon, _ in polygon[0]) < MAX_POLYGON_LON
+                if ring_area_m2(polygon[0]) >= city.min_municipality_polygon_m2
+                and (city.max_polygon_lon is None or min(lon for lon, _ in polygon[0]) < city.max_polygon_lon)
             ]
-            label = name.replace(" Kommune", "").replace("Københavns", "København")
-            inside.append(feature({"name": label, "osm_name": name}, polygons))
+            inside.append(feature({"name": city.municipalities[name], "osm_name": name}, polygons))
         elif polygons:
             outside.append(feature({"name": name}, polygons))
-    missing = set(MAP_MUNICIPALITIES) - {f["properties"]["osm_name"] for f in inside}
+    missing = set(city.municipalities) - {f["properties"]["osm_name"] for f in inside}
     if missing:
         raise RuntimeError(f"Missing municipalities in Overpass response: {sorted(missing)}")
-    write_geojson(MUNICIPALITIES_PATH, inside)
-    write_geojson(EXTERNAL_LAND_PATH, outside)
+    write_geojson(city.municipalities_path, inside)
+    write_geojson(city.external_land_path, outside)
 
 
-def fetch_parks(force: bool) -> None:
-    if PARKS_PATH.exists() and not force:
+def fetch_parks(city: City, force: bool) -> None:
+    if city.parks_path.exists() and not force:
         return
     print("Fetching parks and green space…")
-    bbox = bbox_clause(DETAIL_BBOX)
+    bbox = bbox_clause(city.detail_bbox)
     selectors = [
         '["leisure"="park"]',
         '["leisure"="nature_reserve"]',
@@ -245,7 +210,7 @@ def fetch_parks(force: bool) -> None:
         '["natural"="wood"]',
     ]
     parts = "".join(f"way{s}{bbox};relation{s}{bbox};" for s in selectors)
-    payload = overpass(f"[out:json][timeout:240];({parts});out geom;")
+    payload = overpass(f"[out:json][timeout:180];({parts});out geom;")
     features = []
     for element in payload["elements"]:
         polygons = element_to_polygons(element)
@@ -254,25 +219,26 @@ def fetch_parks(force: bool) -> None:
         area = sum(ring_area_m2(polygon[0]) for polygon in polygons)
         tags = element.get("tags", {})
         features.append(feature({"name": tags.get("name", ""), "shape_area": round(area, 1)}, polygons))
-    write_geojson(PARKS_PATH, features)
+    write_geojson(city.parks_path, features)
 
 
-def fetch_streets(force: bool) -> None:
-    if STREETS_PATH.exists() and not force:
+def fetch_streets(city: City, force: bool) -> None:
+    path = city.major_streets_path
+    if path.exists() and not force:
         return
     print("Fetching major streets…")
     payload = overpass(
-        f'[out:json][timeout:240];way["highway"~"^(motorway|trunk|primary)$"]{bbox_clause(DETAIL_BBOX)};out geom;'
+        f'[out:json][timeout:180];way["highway"~"^(motorway|trunk|primary)$"]{bbox_clause(city.detail_bbox)};out geom;'
     )
-    STREETS_PATH.write_text(json.dumps(payload), encoding="utf-8")
-    print(f"Wrote {STREETS_PATH} ({len(payload.get('elements', []))} ways)")
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    print(f"Wrote {path} ({len(payload.get('elements', []))} ways)")
 
 
-def fetch_water(force: bool) -> None:
-    if WATER_PATH.exists() and not force:
+def fetch_water(city: City, force: bool) -> None:
+    if city.water_path.exists() and not force:
         return
     print("Fetching lakes and inland water…")
-    bbox = bbox_clause(DETAIL_BBOX)
+    bbox = bbox_clause(city.detail_bbox)
     parts = "".join(
         f"way{s}{bbox};relation{s}{bbox};"
         for s in ('["natural"="water"]', '["landuse"="reservoir"]', '["landuse"="basin"]', '["waterway"="riverbank"]')
@@ -286,16 +252,58 @@ def fetch_water(force: bool) -> None:
         tags = element.get("tags", {})
         area = sum(ring_area_m2(polygon[0]) for polygon in polygons)
         features.append(feature({"name": tags.get("name", ""), "water": tags.get("water", ""), "shape_area": round(area, 1)}, polygons))
-    write_geojson(WATER_PATH, features)
+    write_geojson(city.water_path, features)
 
 
-def fetch_street_network(force: bool) -> None:
-    if STREET_NETWORK_PATH.exists() and not force:
+def municipality_bbox(city: City) -> Tuple[float, float, float, float]:
+    """(south, west, north, east) of the mapped municipalities."""
+    payload = json.loads(city.municipalities_path.read_text(encoding="utf-8"))
+    points = [point for f in payload["features"] for polygon in f["geometry"]["coordinates"] for point in polygon[0]]
+    lons = [lon for lon, _ in points]
+    lats = [lat for _, lat in points]
+    return min(lats), min(lons), max(lats), max(lons)
+
+
+def fetch_coastline(city: City, force: bool) -> None:
+    """Coastline ways around the mapped area, as far out as the app draws context. Overpass returns
+    each way that touches a tile whole, so the joined coastline only ever ends outside the area."""
+    if not city.sea_from_coastline or (city.coastline_path.exists() and not force):
+        return
+    print("Fetching the coastline…")
+    south, west, north, east = municipality_bbox(city)
+    lat_margin = (CONTEXT_MARGIN_METERS + 3_000.0) / 111_320.0
+    lon_margin = lat_margin / math.cos(math.radians((south + north) / 2))
+    south, west, north, east = south - lat_margin, west - lon_margin, north + lat_margin, east + lon_margin
+    rows = cols = 2
+    ways: Dict[int, dict] = {}
+    for row in range(rows):
+        for col in range(cols):
+            tile = (
+                south + (north - south) * row / rows,
+                west + (east - west) * col / cols,
+                south + (north - south) * (row + 1) / rows,
+                west + (east - west) * (col + 1) / cols,
+            )
+            print(f"  tile {row * cols + col + 1}/{rows * cols}")
+            payload = overpass(f'[out:json][timeout:180];way["natural"="coastline"]{bbox_clause(tile)};out geom;')
+            for element in payload["elements"]:
+                if element["type"] == "way" and element.get("geometry"):
+                    ways[element["id"]] = {
+                        "id": element["id"],
+                        "points": [[round(node["lon"], 6), round(node["lat"], 6)] for node in element["geometry"]],
+                    }
+    city.coastline_path.write_text(json.dumps({"ways": list(ways.values())}, separators=(",", ":")), encoding="utf-8")
+    print(f"Wrote {city.coastline_path} ({len(ways)} ways)")
+
+
+def fetch_street_network(city: City, force: bool) -> None:
+    path = city.street_network_path
+    if path.exists() and not force:
         return
     print("Fetching full street and path network (large; can take several minutes)…")
     excluded = "proposed|construction|abandoned|disused|platform|raceway|bus_guideway|elevator|rest_area|services"
-    south, west, north, east = STREET_NETWORK_BBOX
-    rows, cols = STREET_NETWORK_TILES
+    south, west, north, east = city.street_bbox
+    rows, cols = city.street_tiles
     elements: Dict[Tuple[str, int], dict] = {}
     for row in range(rows):
         for col in range(cols):
@@ -314,19 +322,23 @@ def fetch_street_network(force: bool) -> None:
             for element in payload["elements"]:
                 elements[(element["type"], element["id"])] = element
     merged = {"elements": list(elements.values())}
-    STREET_NETWORK_PATH.write_text(json.dumps(merged, separators=(",", ":")), encoding="utf-8")
+    path.write_text(json.dumps(merged, separators=(",", ":")), encoding="utf-8")
     ways = sum(1 for element in merged["elements"] if element["type"] == "way")
-    print(f"Wrote {STREET_NETWORK_PATH} ({ways} ways)")
+    print(f"Wrote {path} ({ways} ways)")
 
 
-def main() -> None:
-    force = "--force" in sys.argv
+def main(argv: List[str] | None = None) -> None:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    city = city_from_argv(argv)
+    force = "--force" in argv
+    print(f"OpenStreetMap layers for {city.name}")
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    fetch_municipalities(force)
-    fetch_parks(force)
-    fetch_streets(force)
-    fetch_water(force)
-    fetch_street_network(force)
+    fetch_municipalities(city, force)
+    fetch_coastline(city, force)
+    fetch_parks(city, force)
+    fetch_streets(city, force)
+    fetch_water(city, force)
+    fetch_street_network(city, force)
 
 
 if __name__ == "__main__":

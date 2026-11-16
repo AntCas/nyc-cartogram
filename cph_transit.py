@@ -1,11 +1,11 @@
-"""Extract the Copenhagen rail + harbour-bus network from the national Rejseplanen GTFS feed.
+"""Extract a city's transit network from its GTFS feed.
 
-The feed in GTFS/ covers all of Denmark (buses, ferries, long-distance rail). This module
-keeps the non-bus modes, restricts them to stations in or near the mapped municipalities,
-picks one representative weekday, and returns a compact network description that both the
-site-data builder and the static SVG generator consume.
+Copenhagen's feed (GTFS/) covers all of Denmark; Stockholm's (GTFS-stockholm/) covers the whole
+county. This module keeps the routes the city's `classify_route` (cities.py) recognises, restricts
+them to stops in or near the mapped municipalities, picks one representative weekday, and returns
+a compact network description that both the site-data builder and the static SVG generator consume.
 
-The result is cached in data/cph_transit_network.json and rebuilt when the GTFS files change.
+The result is cached in data/<prefix>_transit_network.json and rebuilt when the GTFS files change.
 """
 
 from __future__ import annotations
@@ -16,66 +16,20 @@ import json
 import math
 import re
 import statistics
+import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Dict, Iterable, List, Sequence, Tuple
 
-ROOT = Path(__file__).resolve().parent
-GTFS_DIR = ROOT / "GTFS"
-DATA_DIR = ROOT / "data"
-MUNICIPALITIES_PATH = DATA_DIR / "cph_municipalities.geojson"
-CACHE_PATH = DATA_DIR / "cph_transit_network.json"
-CACHE_VERSION = 6
+from cities import COPENHAGEN, City, city_from_argv
 
-MODES = [
-    {"id": "metro", "label": "Metro", "color": "#E30613"},
-    {"id": "stog", "label": "S-tog", "color": "#B41730"},
-    {"id": "letbane", "label": "Letbane", "color": "#5E6F82"},
-    {"id": "regional", "label": "Regional trains", "color": "#7C3A5E"},
-    {"id": "harbour", "label": "Harbour bus", "color": "#4FB3BF"},
-    # Dark amber: Movia's yellow would clash with the F line and M2.
-    {"id": "bus", "label": "Bus", "color": "#A8661C"},
-]
-# Draw order (first = bottom): long-distance lines underneath, metro on top.
-MODE_DRAW_ORDER = ("bus", "regional", "harbour", "stog", "letbane", "metro")
-# Movia's buses (route_type 3) and S-buses (700). Rail-replacement buses run by DSB and the Metro
-# are left out, as are demand-responsive services (715).
-BUS_AGENCIES = {"Movia"}
-BUS_ROUTE_TYPES = {"3", "700"}
-BUS_ROUTE_PREFIX = "bus:"
+CACHE_VERSION = 8
+
+# Kept for the Copenhagen-only SVG generator.
+MODE_DRAW_ORDER = COPENHAGEN.mode_draw_order
 # Bus stops with the same name this close together (usually the two sides of the street) form one stop.
 BUS_STOP_MERGE_RADIUS = 150.0
 
-ROUTE_COLORS = {
-    "M1": "#00814F",
-    "M2": "#FFC20E",
-    "M3": "#E30613",
-    "M4": "#0091D2",
-    "A": "#00A0DF",
-    "B": "#4BA545",
-    "Bx": "#A5CF4C",
-    "C": "#F28C00",
-    "E": "#7D60A6",
-    "F": "#F5C400",
-    "H": "#E2001A",
-    "L": "#5E6F82",
-}
-ROUTE_TEXT_COLORS = {"M2": "#17304D", "F": "#17304D", "Bx": "#17304D"}
-
-# Regional operators are merged into one route per operator so that combined
-# frequencies (e.g. all Øresundståg variants) produce realistic waits.
-REGIONAL_ROUTE_NAMES = {
-    "DSB": "DSB",
-    "DSB Vores Tog": "DSB",
-    "Skånetrafiken": "Øresundståg",
-    "Lokaltog A/S": "Lokaltog",
-    "Snälltåget AB": "Snälltåget",
-}
-
-# Stop names that refer to the same place under different names.
-STATION_NAME_ALIASES = {
-    "CPH Lufthavn": "Københavns Lufthavn",
-}
 STATION_MERGE_RADIUS = 600.0
 # Stations just outside the mapped municipalities still serve border neighbourhoods.
 STATION_BOUNDARY_BUFFER = 400.0
@@ -96,8 +50,11 @@ DEFAULT_CROSS_STOP_TRANSFER_SECONDS = 240
 LonLat = Tuple[float, float]
 
 
-def read_csv(name: str) -> Iterable[dict]:
-    with (GTFS_DIR / name).open(encoding="utf-8-sig", newline="") as handle:
+def read_csv(gtfs_dir: Path, name: str) -> Iterable[dict]:
+    path = gtfs_dir / name
+    if not path.exists():
+        return
+    with path.open(encoding="utf-8-sig", newline="") as handle:
         yield from csv.DictReader(handle)
 
 
@@ -133,8 +90,8 @@ def point_in_ring(point: LonLat, ring: Sequence[LonLat]) -> bool:
 class Area:
     """The mapped municipalities in lon/lat, for station filtering."""
 
-    def __init__(self) -> None:
-        payload = json.loads(MUNICIPALITIES_PATH.read_text(encoding="utf-8"))
+    def __init__(self, city: City) -> None:
+        payload = json.loads(city.municipalities_path.read_text(encoding="utf-8"))
         self.polygons: List[List[List[LonLat]]] = []
         for feature in payload["features"]:
             for polygon in feature["geometry"]["coordinates"]:
@@ -171,37 +128,10 @@ class Area:
         return self.contains(point) or self.distance_to_boundary(point) <= STATION_BOUNDARY_BUFFER
 
 
-def classify_route(row: dict, agency_names: Dict[str, str]) -> Tuple[str, str] | None:
-    """Return (mode, route key) for routes we model, or None for everything else."""
-    route_type = row["route_type"]
-    short_name = (row.get("route_short_name") or "").strip()
-    agency = agency_names.get(row.get("agency_id", ""), "")
-    if route_type == "1":
-        return "metro", short_name
-    if route_type == "109":
-        return "stog", short_name
-    if route_type == "0":
-        return "letbane", "L"
-    if route_type == "2":
-        return "regional", REGIONAL_ROUTE_NAMES.get(agency, agency or short_name)
-    if route_type == "4":
-        return "harbour", "Havnebus"
-    if route_type in BUS_ROUTE_TYPES and agency in BUS_AGENCIES and short_name:
-        return "bus", BUS_ROUTE_PREFIX + short_name
-    return None
-
-
-def normalize_station_name(name: str) -> str:
-    name = re.sub(r"\s*\([^)]*\)\s*$", "", name)
-    name = re.sub(r"\s+St\.$", "", name.strip())
-    name = re.sub(r"\s+", " ", name).strip()
-    return STATION_NAME_ALIASES.get(name, name)
-
-
-def active_services_by_date() -> Dict[str, set]:
+def active_services_by_date(gtfs_dir: Path) -> Dict[str, set]:
     weekdays = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
     active: Dict[str, set] = defaultdict(set)
-    for row in read_csv("calendar.txt"):
+    for row in read_csv(gtfs_dir, "calendar.txt"):
         start = dt.datetime.strptime(row["start_date"], "%Y%m%d").date()
         end = dt.datetime.strptime(row["end_date"], "%Y%m%d").date()
         day = start
@@ -209,7 +139,7 @@ def active_services_by_date() -> Dict[str, set]:
             if row[weekdays[day.weekday()]] == "1":
                 active[day.strftime("%Y%m%d")].add(row["service_id"])
             day += dt.timedelta(days=1)
-    for row in read_csv("calendar_dates.txt"):
+    for row in read_csv(gtfs_dir, "calendar_dates.txt"):
         if row["exception_type"] == "1":
             active[row["date"]].add(row["service_id"])
         elif row["exception_type"] == "2":
@@ -232,22 +162,26 @@ def pick_service_date(trips: Dict[str, dict], active: Dict[str, set]) -> str:
     return best_date
 
 
-def gtfs_signature() -> List[List]:
-    return [[path.name, path.stat().st_size, int(path.stat().st_mtime)] for path in sorted(GTFS_DIR.glob("*.txt"))]
+def gtfs_signature(gtfs_dir: Path) -> List[List]:
+    return [[path.name, path.stat().st_size, int(path.stat().st_mtime)] for path in sorted(gtfs_dir.glob("*.txt"))]
 
 
-def build_network() -> dict:
-    area = Area()
-    agency_names = {row["agency_id"]: row["agency_name"] for row in read_csv("agency.txt")}
+def build_network(city: City = COPENHAGEN) -> dict:
+    gtfs_dir = city.gtfs_dir
+    area = Area(city)
+    agency_names = {row["agency_id"]: row["agency_name"] for row in read_csv(gtfs_dir, "agency.txt")}
 
     route_info: Dict[str, Tuple[str, str]] = {}
-    for row in read_csv("routes.txt"):
-        classified = classify_route(row, agency_names)
+    route_labels: Dict[str, str] = {}
+    for row in read_csv(gtfs_dir, "routes.txt"):
+        classified = city.classify_route(row, agency_names.get(row.get("agency_id", ""), ""))
         if classified:
-            route_info[row["route_id"]] = classified
+            mode, route_key, label = classified
+            route_info[row["route_id"]] = (mode, route_key)
+            route_labels[route_key] = label
 
     trips: Dict[str, dict] = {}
-    for row in read_csv("trips.txt"):
+    for row in read_csv(gtfs_dir, "trips.txt"):
         if row["route_id"] not in route_info:
             continue
         mode, route_key = route_info[row["route_id"]]
@@ -259,24 +193,22 @@ def build_network() -> dict:
             "shape_id": row.get("shape_id") or "",
         }
 
-    active = active_services_by_date()
+    active = active_services_by_date(gtfs_dir)
     service_date = pick_service_date(trips, active)
     services = active[service_date]
     trips = {trip_id: trip for trip_id, trip in trips.items() if trip["service_id"] in services}
-    print(f"  service date {service_date}: {len(trips)} rail/ferry trips")
+    print(f"  service date {service_date}: {len(trips)} trips")
 
     stop_times: Dict[str, List[Tuple[int, str, int, int]]] = defaultdict(list)
-    for row in read_csv("stop_times.txt"):
+    for row in read_csv(gtfs_dir, "stop_times.txt"):
         trip_id = row["trip_id"]
         if trip_id not in trips:
             continue
+        arrival, departure = row["arrival_time"] or row["departure_time"], row["departure_time"] or row["arrival_time"]
+        if not arrival:
+            continue  # untimed stop between timepoints
         stop_times[trip_id].append(
-            (
-                int(row["stop_sequence"]),
-                row["stop_id"],
-                parse_gtfs_time(row["arrival_time"]),
-                parse_gtfs_time(row["departure_time"]),
-            )
+            (int(row["stop_sequence"]), row["stop_id"], parse_gtfs_time(arrival), parse_gtfs_time(departure))
         )
     stop_modes: Dict[str, set] = defaultdict(set)
     for trip_id, rows in stop_times.items():
@@ -284,7 +216,7 @@ def build_network() -> dict:
             stop_modes[stop_id].add(trips[trip_id]["mode"])
 
     stops: Dict[str, dict] = {}
-    for row in read_csv("stops.txt"):
+    for row in read_csv(gtfs_dir, "stops.txt"):
         if row["stop_id"] not in stop_modes:
             continue
         point = (float(row["stop_lon"]), float(row["stop_lat"]))
@@ -292,7 +224,7 @@ def build_network() -> dict:
             bus_only = stop_modes[row["stop_id"]] == {"bus"}
             # Bus stops keep their full name ("Nørreport St. (Nørre Voldgade)") and are never merged
             # into a rail station; rail platforms merge by their normalized name.
-            name = re.sub(r"\s+", " ", row["stop_name"]).strip() if bus_only else normalize_station_name(row["stop_name"])
+            name = re.sub(r"\s+", " ", row["stop_name"]).strip() if bus_only else city.normalize_station_name(row["stop_name"])
             stops[row["stop_id"]] = {"name": name, "point": point, "bus": bus_only}
 
     # Group stops into station complexes: same name, close together.
@@ -383,7 +315,7 @@ def build_network() -> dict:
     route_key_by_id = {route_id: info[1] for route_id, info in route_info.items()}
     stop_transfers: Dict[Tuple[str, str], int] = {}
     route_transfers: Dict[Tuple[str, str, str, str], int] = {}
-    for row in read_csv("transfers.txt"):
+    for row in read_csv(gtfs_dir, "transfers.txt"):
         from_stop, to_stop = row["from_stop_id"], row["to_stop_id"]
         if from_stop not in stop_to_station or stop_to_station.get(to_stop) != stop_to_station[from_stop]:
             continue
@@ -454,7 +386,7 @@ def build_network() -> dict:
         for shape_id, _ in counter.most_common(MAX_SHAPES_PER_ROUTE_DIRECTION):
             selected_shapes[shape_id] = route_key
     shape_points: Dict[str, List[Tuple[int, LonLat]]] = defaultdict(list)
-    for row in read_csv("shapes.txt"):
+    for row in read_csv(gtfs_dir, "shapes.txt"):
         if row["shape_id"] in selected_shapes:
             shape_points[row["shape_id"]].append(
                 (int(row["shape_pt_sequence"]), (float(row["shape_pt_lon"]), float(row["shape_pt_lat"])))
@@ -483,20 +415,19 @@ def build_network() -> dict:
 
     routes = {}
     for route_key, mode in sorted(route_modes.items()):
-        mode_color = next(m["color"] for m in MODES if m["id"] == mode)
-        is_bus = mode == "bus"
+        mode_color = next(m["color"] for m in city.modes if m["id"] == mode)
         routes[route_key] = {
             "mode": mode,
-            "label": route_key[len(BUS_ROUTE_PREFIX):] if is_bus else route_key,
-            "color": ROUTE_COLORS.get(route_key, mode_color),
-            "textColor": ROUTE_TEXT_COLORS.get(route_key, "#FFFFFF"),
+            "label": route_labels[route_key],
+            "color": city.route_colors.get(route_key, mode_color),
+            "textColor": city.route_text_colors.get(route_key, "#FFFFFF"),
         }
 
     return {
         "version": CACHE_VERSION,
-        "gtfs": gtfs_signature(),
+        "gtfs": gtfs_signature(gtfs_dir),
         "serviceDate": service_date,
-        "modes": MODES,
+        "modes": list(city.modes),
         "routes": routes,
         "routeWaits": route_waits,
         "stations": stations,
@@ -505,20 +436,26 @@ def build_network() -> dict:
     }
 
 
-def load_network(force: bool = False) -> dict:
-    if not force and CACHE_PATH.exists():
-        cached = json.loads(CACHE_PATH.read_text(encoding="utf-8"))
-        if cached.get("version") == CACHE_VERSION and cached.get("gtfs") == gtfs_signature():
+def load_network(force: bool = False, city: City = COPENHAGEN) -> dict:
+    cache_path = city.transit_cache_path
+    if not force and cache_path.exists():
+        cached = json.loads(cache_path.read_text(encoding="utf-8"))
+        if cached.get("version") == CACHE_VERSION and cached.get("gtfs") == gtfs_signature(city.gtfs_dir):
             return cached
-    print("Extracting Copenhagen network from GTFS (takes a minute)…")
-    network = build_network()
-    CACHE_PATH.write_text(json.dumps(network, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
-    print(f"  cached to {CACHE_PATH}")
+    if not (city.gtfs_dir / "stop_times.txt").exists():
+        raise SystemExit(f"{city.gtfs_dir} has no GTFS feed; run `python3 setup_data.py --city {city.id}` first.")
+    print(f"Extracting the {city.name} network from GTFS (takes a minute)…")
+    network = build_network(city)
+    cache_path.write_text(json.dumps(network, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+    print(f"  cached to {cache_path}")
     return network
 
 
 if __name__ == "__main__":
-    net = load_network(force=True)
+    net = load_network(force=True, city=city_from_argv(sys.argv))
     print(f"{len(net['stations'])} stations, {len(net['edges'])} edges, {len(net['shapes'])} shape runs")
+    by_mode = Counter(info["mode"] for info in net["routes"].values())
+    print("  routes per mode:", dict(by_mode))
     for route_key, info in net["routes"].items():
-        print(f"  {info['mode']:9s} {route_key:12s} wait {net['routeWaits'].get(route_key)}")
+        if info["mode"] != "bus":
+            print(f"  {info['mode']:9s} {route_key:12s} wait {net['routeWaits'].get(route_key)}")

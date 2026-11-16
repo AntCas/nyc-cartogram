@@ -30,8 +30,8 @@ class SiteHandler(SimpleHTTPRequestHandler):
 
 def main() -> None:
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8000
-    if not (SITE_DIR / "data" / "commute_map_data.json").exists():
-        sys.exit("site/data/commute_map_data.json is missing; run `python3 build_commute_site_data.py` first.")
+    if not (SITE_DIR / "data" / "cities.json").exists():
+        sys.exit("site/data/cities.json is missing; run `python3 setup_data.py` (or build_commute_site_data.py) first.")
     server = ThreadingHTTPServer(("0.0.0.0", port), partial(SiteHandler, directory=str(SITE_DIR)))
     print(f"Serving {SITE_DIR} on http://0.0.0.0:{port}/")
     try:

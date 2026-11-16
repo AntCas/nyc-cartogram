@@ -87,6 +87,45 @@ body {
   line-height: 1.1;
 }
 
+/* The title doubles as the city selector. */
+.city-select {
+  appearance: none;
+  -webkit-appearance: none;
+  max-width: 100%;
+  margin: 0 0 0 -6px;
+  padding: 1px 30px 1px 6px;
+  border: 0;
+  border-radius: 8px;
+  font: inherit;
+  font-weight: 700;
+  color: var(--ink);
+  cursor: pointer;
+  background: transparent
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1.4 1.2 6 5.8l4.6-4.6' fill='none' stroke='%2317304d' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
+    no-repeat right 9px center / 12px 8px;
+}
+
+.city-select:hover:not(:disabled),
+.city-select:focus-visible {
+  background-color: rgba(23, 48, 77, 0.08);
+  outline: none;
+}
+
+.city-select:focus-visible {
+  box-shadow: 0 0 0 2px rgba(23, 48, 77, 0.3);
+}
+
+.city-select:disabled {
+  cursor: default;
+  opacity: 1;
+  background-image: none;
+}
+
+.city-select option {
+  font-size: 1rem;
+  font-weight: 500;
+}
+
 .status-text {
   margin: 0 0 10px;
   color: var(--muted);
@@ -595,16 +634,20 @@ body {
 
 /* ---------- bottom: hint bar, legend, tools ---------- */
 
+/* Spans from just right of the credits button (16 + 24 + 12 px) to just left of .map-tools
+   (16 px inset + 260 px legend + 16 px gap); wraps onto a second line on narrow windows. */
 .hint-bar {
   position: absolute;
   z-index: 5;
-  left: 50%;
+  left: 52px;
+  right: 292px;
   bottom: 16px;
-  transform: translateX(-50%);
   display: flex;
-  gap: 18px;
+  flex-wrap: wrap;
+  justify-content: space-evenly;
+  gap: 4px 18px;
   padding: 8px 16px;
-  border-radius: 999px;
+  border-radius: 17px;
   background: rgba(23, 48, 77, 0.9);
   color: #f3ece0;
   font-size: 0.8rem;
@@ -836,11 +879,7 @@ body {
 }
 
 @media (max-width: 1320px) {
-  .hint-bar {
-    bottom: 64px;
-  }
-
   .toast {
-    bottom: 112px;
+    bottom: 96px;
   }
 }

@@ -13,11 +13,13 @@ venv/
 env/
 output/
 site/data/
-# National Rejseplanen GTFS feed (~350 MB) and the network extracted from it
+# GTFS feeds (~350 MB each: Rejseplanen's national feed, SL's Stockholm feed) and the networks
+# extracted from them
 GTFS/
-data/cph_transit_network.json
-# Raw OSM street extract (~73 MB); re-create with fetch_cph_basemap.py
-data/cph_street_network.json
+GTFS-stockholm/
+data/*_transit_network.json
+# Raw OSM street extracts (~70-110 MB each); re-create with fetch_cph_basemap.py
+data/*_street_network.json
 .DS_Store
 
 *.swp
